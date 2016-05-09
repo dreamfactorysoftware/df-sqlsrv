@@ -5,8 +5,8 @@ use DreamFactory\Core\Database\DbSchemaExtensions;
 use DreamFactory\Core\Enums\ServiceTypeGroups;
 use DreamFactory\Core\Services\ServiceManager;
 use DreamFactory\Core\Services\ServiceType;
-use DreamFactory\Core\SqlDb\Models\SqlDbConfig;
 use DreamFactory\Core\SqlSrv\Database\Schema\SqlServerSchema;
+use DreamFactory\Core\SqlSrv\Models\SqlSrvDbConfig;
 use DreamFactory\Core\SqlSrv\Services\SqlSrv;
 
 class ServiceProvider extends \Illuminate\Support\ServiceProvider
@@ -21,7 +21,7 @@ class ServiceProvider extends \Illuminate\Support\ServiceProvider
                     'label'          => 'SQL Server',
                     'description'    => 'Database service supporting SQL Server connections.',
                     'group'          => ServiceTypeGroups::DATABASE,
-                    'config_handler' => SqlDbConfig::class,
+                    'config_handler' => SqlSrvDbConfig::class,
                     'factory'        => function ($config){
                         return new SqlSrv($config);
                     },
