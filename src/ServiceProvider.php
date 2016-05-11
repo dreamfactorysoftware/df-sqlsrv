@@ -17,12 +17,12 @@ class ServiceProvider extends \Illuminate\Support\ServiceProvider
         $this->app->resolving('df.service', function (ServiceManager $df){
             $df->addType(
                 new ServiceType([
-                    'name'           => 'sqlsrv',
-                    'label'          => 'SQL Server',
-                    'description'    => 'Database service supporting SQL Server connections.',
-                    'group'          => ServiceTypeGroups::DATABASE,
-                    'config_handler' => SqlSrvDbConfig::class,
-                    'factory'        => function ($config){
+                    'name'                  => 'sqlsrv',
+                    'label'                 => 'SQL Server',
+                    'description'           => 'Database service supporting SQL Server connections.',
+                    'group'                 => ServiceTypeGroups::DATABASE,
+                    'config_handler'        => SqlSrvDbConfig::class,
+                    'factory'               => function ($config){
                         return new SqlSrv($config);
                     },
                 ])

@@ -11,12 +11,26 @@ class SqlSrvDbConfig extends SqlDbConfig
 {
     public static function getDriverName()
     {
-        return 'sqlsrv';
+        if (substr(PHP_OS, 0, 3) == 'WIN') {
+            return 'sqlsrv';
+        } else {
+            return 'dblib';
+        }
     }
 
     public static function getDefaultDsn()
     {
-        // http://php.net/manual/en/ref.pdo-dblib.connection.php
-        return 'dblib:host=localhost:2638;dbname=database';
+        if (substr(PHP_OS, 0, 3) == 'WIN') {
+            // http://php.net/manual/en/ref.pdo-sqlsrv.connection.php
+            return 'sqlsrv:Server=localhost,1433;Database=db';
+        } else {
+            // http://php.net/manual/en/ref.pdo-dblib.connection.php
+            return 'dblib:host=localhost:1433;dbname=database;charset=UTF-8';
+        }
+    }
+
+    public static function getDefaultPort()
+    {
+        return 1433;
     }
 }
