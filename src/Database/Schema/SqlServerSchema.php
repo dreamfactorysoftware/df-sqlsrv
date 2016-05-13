@@ -412,22 +412,22 @@ EOD;
                 break;
             case 1: // Only 1 primary key
                 $primary = $primary[0];
-                $cnk = strtolower($primary);
-                if (isset($table->columns[$cnk])) {
-                    $table->columns[$cnk]->isPrimaryKey = true;
-                    if ((ColumnSchema::TYPE_INTEGER === $table->columns[$cnk]->type) &&
-                        $table->columns[$cnk]->autoIncrement
-                    ) {
-                        $table->columns[$cnk]->type = ColumnSchema::TYPE_ID;
+                $column = $table->getColumn($primary);
+                if (isset($column)) {
+                    $column->isPrimaryKey = true;
+                    if ((ColumnSchema::TYPE_INTEGER === $column->type) && $column->autoIncrement) {
+                        $column->type = ColumnSchema::TYPE_ID;
                     }
+                    $table->addColumn($column);
                 }
                 break;
             default:
                 if (is_array($primary)) {
                     foreach ($primary as $key) {
-                        $cnk = strtolower($key);
-                        if (isset($table->columns[$cnk])) {
-                            $table->columns[$cnk]->isPrimaryKey = true;
+                        $column = $table->getColumn($key);
+                        if (isset($column)) {
+                            $column->isPrimaryKey = true;
+                            $table->addColumn($column);
                         }
                     }
                 }
