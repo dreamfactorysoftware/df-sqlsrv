@@ -753,12 +753,7 @@ MYSQL;
         return $results;
     }
 
-    /**
-     * @param bool $update
-     *
-     * @return mixed
-     */
-    public function getTimestampForSet($update = false)
+    public function getTimestampForSet()
     {
         return $this->connection->raw('(SYSDATETIMEOFFSET())');
     }
