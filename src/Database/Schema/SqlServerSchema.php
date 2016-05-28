@@ -2,7 +2,9 @@
 namespace DreamFactory\Core\SqlSrv\Database\Schema;
 
 use DreamFactory\Core\Database\DataReader;
+use DreamFactory\Core\Database\Schema\ColumnSchema;
 use DreamFactory\Core\Database\Schema\Schema;
+use DreamFactory\Core\Database\Schema\TableSchema;
 use DreamFactory\Core\Exceptions\ForbiddenException;
 
 /**
@@ -11,6 +13,13 @@ use DreamFactory\Core\Exceptions\ForbiddenException;
 class SqlServerSchema extends Schema
 {
     const DEFAULT_SCHEMA = 'dbo';
+
+    /**
+     * @const string Quoting characters
+     */
+    const LEFT_QUOTE_CHARACTER = '[';
+
+    const RIGHT_QUOTE_CHARACTER = ']';
 
     /**
      * @param boolean $refresh if we need to refresh schema cache.
@@ -272,33 +281,7 @@ class SqlServerSchema extends Schema
 
         return $definition;
     }
-
-    /**
-     * Quotes a table name for use in a query.
-     * A simple table name does not schema prefix.
-     *
-     * @param string $name table name
-     *
-     * @return string the properly quoted table name
-     */
-    public function quoteSimpleTableName($name)
-    {
-        return '[' . $name . ']';
-    }
-
-    /**
-     * Quotes a column name for use in a query.
-     * A simple column name does not contain prefix.
-     *
-     * @param string $name column name
-     *
-     * @return string the properly quoted column name
-     */
-    public function quoteSimpleColumnName($name)
-    {
-        return '[' . $name . ']';
-    }
-
+    
     /**
      * Compares two table names.
      * The table names can be either quoted or unquoted. This method
@@ -412,22 +395,22 @@ EOD;
                 break;
             case 1: // Only 1 primary key
                 $primary = $primary[0];
-                $cnk = strtolower($primary);
-                if (isset($table->columns[$cnk])) {
-                    $table->columns[$cnk]->isPrimaryKey = true;
-                    if ((ColumnSchema::TYPE_INTEGER === $table->columns[$cnk]->type) &&
-                        $table->columns[$cnk]->autoIncrement
-                    ) {
-                        $table->columns[$cnk]->type = ColumnSchema::TYPE_ID;
+                $column = $table->getColumn($primary);
+                if (isset($column)) {
+                    $column->isPrimaryKey = true;
+                    if ((ColumnSchema::TYPE_INTEGER === $column->type) && $column->autoIncrement) {
+                        $column->type = ColumnSchema::TYPE_ID;
                     }
+                    $table->addColumn($column);
                 }
                 break;
             default:
                 if (is_array($primary)) {
                     foreach ($primary as $key) {
-                        $cnk = strtolower($key);
-                        if (isset($table->columns[$cnk])) {
-                            $table->columns[$cnk]->isPrimaryKey = true;
+                        $column = $table->getColumn($key);
+                        if (isset($column)) {
+                            $column->isPrimaryKey = true;
+                            $table->addColumn($column);
                         }
                     }
                 }
@@ -569,11 +552,11 @@ EOD;
         $c->autoIncrement = ($column['is_identity'] === '1');
         $c->comment = (isset($column['Comment']) ? ($column['Comment'] === null ? '' : $column['Comment']) : '');
 
-        $c->extractFixedLength($column['type']);
-        $c->extractMultiByteSupport($column['type']);
-        $c->extractType($column['type']);
+        $c->fixedLength = $this->extractFixedLength($column['type']);
+        $c->supportsMultibyte = $this->extractMultiByteSupport($column['type']);
+        $this->extractType($c, $column['type']);
         if (isset($column['default_definition'])) {
-            $c->extractDefault($column['default_definition']);
+            $this->extractDefault($c, $column['default_definition']);
         }
 
         return $c;
@@ -770,12 +753,7 @@ MYSQL;
         return $results;
     }
 
-    /**
-     * @param bool $update
-     *
-     * @return mixed
-     */
-    public function getTimestampForSet($update = false)
+    public function getTimestampForSet()
     {
         return $this->connection->raw('(SYSDATETIMEOFFSET())');
     }
@@ -794,6 +772,99 @@ MYSQL;
         }
 
         return $value;
+    }
+
+    /**
+     * Extracts the PHP type from DB type.
+     *
+     * @param string $dbType DB type
+     */
+    public function extractType(ColumnSchema &$column, $dbType)
+    {
+        parent::extractType($column, $dbType);
+
+        if ((false !== strpos($dbType, 'varchar')) && (null === $column->size)) {
+            $column->type = ColumnSchema::TYPE_TEXT;
+        }
+        if ((0 === strcasecmp($dbType, 'timestamp')) || (0 === strcasecmp($dbType, 'rowversion'))) {
+            $column->type = ColumnSchema::TYPE_BIGINT;
+        }
+    }
+
+    /**
+     * Extracts the default value for the column.
+     * The value is typecasted to correct PHP type.
+     *
+     * @param mixed $defaultValue the default value obtained from metadata
+     */
+    public function extractDefault(ColumnSchema &$field, $defaultValue)
+    {
+        if ($defaultValue == '(NULL)') {
+            $field->defaultValue = null;
+        } elseif ($field->type === ColumnSchema::TYPE_BOOLEAN) {
+            if ('((1))' === $defaultValue) {
+                $field->defaultValue = true;
+            } elseif ('((0))' === $defaultValue) {
+                $field->defaultValue = false;
+            } else {
+                $field->defaultValue = null;
+            }
+        } elseif ($field->type === ColumnSchema::TYPE_TIMESTAMP) {
+            $field->defaultValue = null;
+        } else {
+            parent::extractDefault($field, str_replace(['(', ')', "'"], '', $defaultValue));
+        }
+    }
+
+    /**
+     * Extracts size, precision and scale information from column's DB type.
+     * We do nothing here, since sizes and precisions have been computed before.
+     *
+     * @param string $dbType the column's DB type
+     */
+    public function extractLimit(ColumnSchema &$field, $dbType)
+    {
+    }
+
+    /**
+     * Converts the input value to the type that this column is of.
+     *
+     * @param mixed $value input value
+     *
+     * @return mixed converted value
+     */
+    public function typecast(ColumnSchema $field, $value)
+    {
+        if ($field->phpType === 'boolean') {
+            return $value ? 1 : 0;
+        } else {
+            return parent::typecast($field, $value);
+        }
+    }
+
+    public function parseFieldForSelect(ColumnSchema $field, $as_quoted_string = false)
+    {
+        $name = ($as_quoted_string) ? $field->rawName : $field->name;
+        $alias = $field->getName(true);
+        if ($as_quoted_string && !ctype_alnum($alias)) {
+            $alias = '[' . $alias . ']';
+        }
+        switch ($field->dbType) {
+//            case 'datetime':
+//            case 'datetimeoffset':
+//                return "(CONVERT(nvarchar(30), $name, 127)) AS $alias";
+            case 'image':
+                return "(CONVERT(varbinary(max), $name)) AS $alias";
+            case 'timestamp': // deprecated, not a real timestamp, but internal rowversion
+            case 'rowversion':
+                return "CAST($name AS BIGINT) AS $alias";
+            case 'geometry':
+            case 'geography':
+            case 'hierarchyid':
+                return "($name.ToString()) AS $alias";
+            default :
+                return parent::parseFieldForSelect($field, $as_quoted_string);
+        }
     }
 
     /**

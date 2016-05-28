@@ -32,71 +32,7 @@ class SqlSrv extends SqlDb
             }
         }
 
-        $dsn = isset($config['dsn']) ? $config['dsn'] : null;
-        if (!empty($dsn)) {
-            // default PDO DSN pieces
-            $dsn = str_replace(' ', '', $dsn);
-            if (!isset($config['port']) && (false !== ($pos = strpos($dsn, 'port=')))) {
-                $temp = substr($dsn, $pos + 5);
-                $config['port'] = (false !== $pos = strpos($temp, ';')) ? substr($temp, 0, $pos) : $temp;
-            }
-            if (!isset($config['host']) && (false !== ($pos = strpos($dsn, 'host=')))) {
-                $temp = substr($dsn, $pos + 5);
-                $host = (false !== $pos = stripos($temp, ';')) ? substr($temp, 0, $pos) : $temp;
-                if (!isset($config['port']) && (false !== ($pos = stripos($host, ':')))) {
-                    $temp = substr($host, $pos + 1);
-                    $host = substr($host, 0, $pos);
-                    $config['port'] = (false !== $pos = stripos($temp, ';')) ? substr($temp, 0, $pos) : $temp;
-                }
-                $config['host'] = $host;
-            }
-            if (!isset($config['database']) && (false !== ($pos = strpos($dsn, 'dbname=')))) {
-                $temp = substr($dsn, $pos + 7);
-                $config['database'] = (false !== $pos = strpos($temp, ';')) ? substr($temp, 0, $pos) : $temp;
-            }
-            if (!isset($config['charset'])) {
-                if (false !== ($pos = strpos($dsn, 'charset='))) {
-                    $temp = substr($dsn, $pos + 8);
-                    $config['charset'] = (false !== $pos = strpos($temp, ';')) ? substr($temp, 0, $pos) : $temp;
-                } else {
-                    $config['charset'] = 'utf8';
-                }
-            }
-            // SQL Server native driver specifics
-            if (!isset($config['host']) && (false !== ($pos = stripos($dsn, 'Server=')))) {
-                $temp = substr($dsn, $pos + 7);
-                $host = (false !== $pos = stripos($temp, ';')) ? substr($temp, 0, $pos) : $temp;
-                if (!isset($config['port']) && (false !== ($pos = stripos($host, ',')))) {
-                    $temp = substr($host, $pos + 1);
-                    $host = substr($host, 0, $pos);
-                    $config['port'] = (false !== $pos = stripos($temp, ';')) ? substr($temp, 0, $pos) : $temp;
-                }
-                $config['host'] = $host;
-            }
-            if (!isset($config['database']) && (false !== ($pos = stripos($dsn, 'Database=')))) {
-                $temp = substr($dsn, $pos + 9);
-                $config['database'] = (false !== $pos = stripos($temp, ';')) ? substr($temp, 0, $pos) : $temp;
-            }
-        }
-
-        if (!isset($config['collation'])) {
-            $config['collation'] = 'utf8_unicode_ci';
-        }
-
-        // must be there
-        if (!array_key_exists('database', $config)) {
-            $config['database'] = null;
-        }
-
-        // must be there
-        if (!array_key_exists('prefix', $config)) {
-            $config['prefix'] = null;
-        }
-
-        // laravel database config requires options to be [], not null
-        if (array_key_exists('options', $config) && is_null($config['options'])) {
-            $config['options'] = [];
-        }
+        parent::adaptConfig($config);
     }
 
     protected function initStatements($statements = [])
