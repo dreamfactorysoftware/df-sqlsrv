@@ -814,7 +814,7 @@ EOD;
                 case 'IN':
                     $pName = ':' . $paramSchema->name;
                     $paramStr .= (empty($paramStr)) ? $pName : ", $pName";
-                    $bindings[$pName] = array_get($values, $paramSchema->name);
+                    $bindings[$pName] = array_get($values, $key);
                     break;
                 case 'INOUT':
                     $pName = '@' . $paramSchema->name;
@@ -822,7 +822,7 @@ EOD;
                         $paramStr .= (empty($paramStr) ? $pName : ", $pName") . " OUTPUT";
                         // with dblib driver you can't bind output parameters
                         $prefix .= "DECLARE $pName {$paramSchema->dbType};";
-                        $prefix .= "SET $pName = " . array_get($values, $paramSchema->name) . ';';
+                        $prefix .= "SET $pName = " . array_get($values, $key) . ';';
                         $postfix .= "SELECT $pName as " . $this->quoteColumnName($paramSchema->name) . ';';
                     } else {
                         $paramStr .= (empty($paramStr) ? $pName : ", $pName") . '=:' . $paramSchema->name;
@@ -883,10 +883,10 @@ EOD;
                 $temp = $reader->readAll();
                 $keep = true;
                 if (1 == count($temp)) {
-                    $check = current($temp);
+                    $check = array_change_key_case(current($temp), CASE_LOWER);
                     foreach ($param_schemas as $key => $paramSchema) {
-                        if (array_key_exists($paramSchema->name, $check)) {
-                            $values[$paramSchema->name] = $check[$paramSchema->name];
+                        if (array_key_exists($key, $check)) {
+                            $values[$key] = $check[$key];
                             $keep = false;
                         }
                     }
