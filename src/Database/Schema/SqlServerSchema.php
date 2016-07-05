@@ -852,7 +852,7 @@ EOD;
                 }
             }
 
-            return "CALL($paramStr)";
+            return "CALL $routine($paramStr)";
         }
     }
 
