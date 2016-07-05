@@ -6,6 +6,7 @@ use DreamFactory\Core\Database\Schema\ColumnSchema;
 use DreamFactory\Core\Database\Schema\Schema;
 use DreamFactory\Core\Database\Schema\TableSchema;
 use DreamFactory\Core\Enums\DbSimpleTypes;
+use DreamFactory\Core\Exceptions\BadRequestException;
 use DreamFactory\Core\Exceptions\ForbiddenException;
 
 /**
@@ -706,7 +707,8 @@ EOD;
     /**
      * Extracts the PHP type from DB type.
      *
-     * @param string $dbType DB type
+     * @param ColumnSchema $column
+     * @param string       $dbType DB type
      */
     public function extractType(ColumnSchema &$column, $dbType)
     {
@@ -799,120 +801,163 @@ EOD;
     /**
      * @inheritdoc
      */
-    protected function callProcedureInternal($routine, array $param_schemas, array &$values)
+    protected function getProcedureStatement($routine, array $param_schemas, array &$values)
+    {
+        // Note that using the dblib driver doesn't allow binding of output parameters,
+        // and also requires declaration prior to and selecting after to retrieve them.
+        if (in_array('dblib', \PDO::getAvailableDrivers())) {
+            $paramStr = '';
+            $prefix = '';
+            $postfix = '';
+            foreach ($param_schemas as $key => $paramSchema) {
+                switch ($paramSchema->paramType) {
+                    case 'IN':
+                        $pName = ':' . $paramSchema->name;
+                        $paramStr .= (empty($paramStr)) ? $pName : ", $pName";
+                        break;
+                    case 'INOUT':
+                        $pName = '@' . $paramSchema->name;
+                        $paramStr .= (empty($paramStr) ? $pName : ", $pName") . " OUTPUT";
+                        $prefix .= "DECLARE $pName {$paramSchema->dbType};";
+                        if (array_key_exists($key, $values)) {
+                            // workaround for MS reporting OUT-behaving params as INOUT
+                            $prefix .= "SET $pName = " . array_get($values, $key) . ';';
+                        }
+                        $postfix .= "SELECT $pName as " . $this->quoteColumnName($paramSchema->name) . ';';
+                        break;
+                    case 'OUT':
+                        $pName = '@' . $paramSchema->name;
+                        $paramStr .= (empty($paramStr) ? $pName : ", $pName") . " OUTPUT";
+                        $prefix .= "DECLARE $pName {$paramSchema->dbType};";
+                        $postfix .= "SELECT $pName as " . $this->quoteColumnName($paramSchema->name) . ';';
+                        break;
+                    default:
+                        break;
+                }
+            }
+
+            return "$prefix EXEC $routine $paramStr; $postfix";
+        } else {
+            $paramStr = '';
+            foreach ($param_schemas as $key => $paramSchema) {
+                switch ($paramSchema->paramType) {
+                    case 'IN':
+                    case 'INOUT':
+                    case 'OUT':
+                        $pName = '@' . $paramSchema->name;
+                        $paramStr .= (empty($paramStr) ? $pName : ", $pName") . '=:' . $paramSchema->name;
+                        break;
+                    default:
+                        break;
+                }
+            }
+
+            return "CALL($paramStr)";
+        }
+    }
+
+    protected function determineRoutineValues(array $param_schemas, array $in_params)
     {
         // Note that using the dblib driver doesn't allow binding of output parameters,
         // and also requires declaration prior to and selecting after to retrieve them.
         $dblib = in_array('dblib', \PDO::getAvailableDrivers());
-
-        $paramStr = '';
-        $prefix = '';
-        $postfix = '';
-        $bindings = [];
+        // check associative
+        $keys = array_keys($in_params);
+        $isAssociative = (array_keys($keys) !== $keys);
+        $in_params = array_change_key_case($in_params, CASE_LOWER);
+        $values = [];
+        $index = -1;
+        // key is lowercase index
         foreach ($param_schemas as $key => $paramSchema) {
+            $index++;
             switch ($paramSchema->paramType) {
                 case 'IN':
-                    $pName = ':' . $paramSchema->name;
-                    $paramStr .= (empty($paramStr)) ? $pName : ", $pName";
-                    $bindings[$pName] = array_get($values, $key);
+                    $value = null;
+                    if ($isAssociative) {
+                        if (array_key_exists($key, $in_params)) {
+                            $value = $in_params[$key];
+                        } elseif (empty($paramSchema->defaultValue)) {
+                            throw new BadRequestException("Procedure requires value for parameter '{$paramSchema->name}'.");
+                        }
+                    } elseif (array_key_exists($index, $in_params)) {
+                        if (is_array($in_params[$index])) {
+                            if (array_key_exists('value', $in_params[$index])) {
+                                $value = $in_params[$index]['value'];
+                            } elseif (empty($paramSchema->defaultValue)) {
+                                throw new BadRequestException("Procedure requires value for parameter '{$paramSchema->name}'.");
+                            }
+                        } else {
+                            $value = $in_params[$index];
+                        }
+                    } elseif (empty($paramSchema->defaultValue)) {
+                        throw new BadRequestException("Procedure requires value for parameter '{$paramSchema->name}'.");
+                    }
+
+                    $values[$key] = $value;
                     break;
                 case 'INOUT':
-                    $pName = '@' . $paramSchema->name;
-                    if ($dblib) {
-                        $paramStr .= (empty($paramStr) ? $pName : ", $pName") . " OUTPUT";
-                        // with dblib driver you can't bind output parameters
-                        $prefix .= "DECLARE $pName {$paramSchema->dbType};";
-                        $prefix .= "SET $pName = " . array_get($values, $key) . ';';
-                        $postfix .= "SELECT $pName as " . $this->quoteColumnName($paramSchema->name) . ';';
-                    } else {
-                        $paramStr .= (empty($paramStr) ? $pName : ", $pName") . '=:' . $paramSchema->name;
+                    // leave it to microsoft to report OUT parameters as INOUT, even if they don't expect an input
+                    // workaround is to assume the client passes them in if needed, otherwise don't throw exception
+                    if ($isAssociative) {
+                        if (array_key_exists($key, $in_params)) {
+                            $values[$key] = $in_params[$key];
+                        }
+                    } elseif (array_key_exists($index, $in_params)) {
+                        if (is_array($in_params[$index])) {
+                            if (array_key_exists('value', $in_params[$index])) {
+                                $values[$key] = $in_params[$index]['value'];
+                            }
+                        } else {
+                            $values[$key] = $in_params[$index];
+                        }
+                    }
+
+                    if (!$dblib && !array_key_exists($key, $values)) {
+                        // stick something in there for binding
+                        $values[$key] = null;
                     }
                     break;
                 case 'OUT':
-                    $pName = '@' . $paramSchema->name;
-                    if ($dblib) {
-                        $paramStr .= (empty($paramStr) ? $pName : ", $pName") . " OUTPUT";
-                        // with dblib driver you can't bind output parameters
-                        $prefix .= "DECLARE $pName {$paramSchema->dbType};";
-                        $postfix .= "SELECT $pName as " . $this->quoteColumnName($paramSchema->name) . ';';
-                    } else {
-                        $paramStr .= (empty($paramStr) ? $pName : ", $pName") . '=:' . $paramSchema->name;
-                    }
+                    $values[$key] = null;
                     break;
                 default:
                     break;
             }
         }
 
-        $sql = "$prefix EXEC $routine $paramStr; $postfix";
-
-        /** @type \PDOStatement $statement */
-        $statement = $this->connection->getPdo()->prepare($sql);
-
-        // do binding
-        $this->bindValues($statement, $bindings);
-        if (!$dblib) {
-            foreach ($param_schemas as $key => $paramSchema) {
-                switch ($paramSchema->paramType) {
-                    case 'INOUT':
-                    case 'OUT':
-                        $pdoType = $this->getPdoType($paramSchema->type);
-                        $this->bindParam($statement, ':' . $paramSchema->name, $values[$key],
-                            $pdoType | \PDO::PARAM_INPUT_OUTPUT, $paramSchema->length);
-                }
-                break;
-            }
-        }
-
-        // execute
-        // support multiple result sets
-        try {
-            $statement->execute();
-            $reader = new DataReader($statement);
-        } catch (\Exception $e) {
-            $errorInfo = $e instanceof \PDOException ? $e : null;
-            $message = $e->getMessage();
-            throw new \Exception($message, (int)$e->getCode(), $errorInfo);
-        }
-        $result = [];
-        if (!empty($temp = $reader->readAll())) {
-            $result[] = $temp;
-        }
-        if ($reader->nextResult()) {
-            do {
-                $temp = $reader->readAll();
-                $keep = true;
-                if (1 == count($temp)) {
-                    $check = array_change_key_case(current($temp), CASE_LOWER);
-                    foreach ($param_schemas as $key => $paramSchema) {
-                        if (array_key_exists($key, $check)) {
-                            $values[$key] = $check[$key];
-                            $keep = false;
-                        }
-                    }
-                }
-                if ($keep) {
-                    if (!empty($temp)) {
-                        $result[] = $temp;
-                    }
-                }
-            } while ($reader->nextResult());
-        }
-        // if there is only one data set, just return it
-        if (1 == count($result)) {
-            $result = $result[0];
-        }
-
-        return $result;
+        return $values;
     }
 
-    protected function callFunctionInternal($routine, $paramStr)
+    protected function doRoutineBinding($statement, array $paramSchemas, array $values)
     {
-        // move always use schema in name here
+        // Note that using the dblib driver doesn't allow binding of output parameters,
+        // and also requires declaration prior to and selecting after to retrieve them.
+        $dblib = in_array('dblib', \PDO::getAvailableDrivers());
+        // do binding
+        foreach ($paramSchemas as $key => $paramSchema) {
+            switch ($paramSchema->paramType) {
+                case 'IN':
+                    $this->bindValue($statement, ':' . $paramSchema->name, array_get($values, $key));
+                    break;
+                case 'INOUT':
+                case 'OUT':
+                    if (!$dblib) {
+                        $pdoType = $this->getPdoType($paramSchema->type);
+                        $this->bindParam($statement, ':' . $paramSchema->name, array_get($values, $key),
+                            $pdoType | \PDO::PARAM_INPUT_OUTPUT, $paramSchema->length);
+                    }
+                    break;
+            }
+        }
+    }
+
+    protected function getFunctionStatement($routine, $param_schemas, $values)
+    {
+        // must always use schema in function name
         if (0 !== strpos($routine, '.')) {
-            $routine = 'dbo.' . $routine;
+            $routine = static::DEFAULT_SCHEMA . '.' . $routine;
         }
 
-        return parent::callFunctionInternal($routine, $paramStr);
+        return parent::getFunctionStatement($routine, $param_schemas, $values);
     }
 }
