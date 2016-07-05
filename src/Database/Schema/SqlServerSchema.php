@@ -1,7 +1,6 @@
 <?php
 namespace DreamFactory\Core\SqlSrv\Database\Schema;
 
-use DreamFactory\Core\Database\DataReader;
 use DreamFactory\Core\Database\Schema\ColumnSchema;
 use DreamFactory\Core\Database\Schema\Schema;
 use DreamFactory\Core\Database\Schema\TableSchema;
@@ -852,7 +851,7 @@ EOD;
                 }
             }
 
-            return "CALL $routine($paramStr)";
+            return "EXEC $routine $paramStr";
         }
     }
 
@@ -923,31 +922,30 @@ EOD;
                 default:
                     break;
             }
+            $values[$key] = $this->formatValue($values[$key], $paramSchema->type);
         }
 
         return $values;
     }
 
-    protected function doRoutineBinding($statement, array $paramSchemas, array $values)
+    protected function doRoutineBinding($statement, array $paramSchemas, array &$values)
     {
-        // Note that using the dblib driver doesn't allow binding of output parameters,
-        // and also requires declaration prior to and selecting after to retrieve them.
-        $dblib = in_array('dblib', \PDO::getAvailableDrivers());
-        // do binding
-        foreach ($paramSchemas as $key => $paramSchema) {
-            switch ($paramSchema->paramType) {
-                case 'IN':
-                    $this->bindValue($statement, ':' . $paramSchema->name, array_get($values, $key));
-                    break;
-                case 'INOUT':
-                case 'OUT':
-                    if (!$dblib) {
-                        $pdoType = $this->getPdoType($paramSchema->type);
-                        $this->bindParam($statement, ':' . $paramSchema->name, array_get($values, $key),
-                            $pdoType | \PDO::PARAM_INPUT_OUTPUT, $paramSchema->length);
-                    }
-                    break;
+        if (in_array('dblib', \PDO::getAvailableDrivers())) {
+            // do binding
+            foreach ($paramSchemas as $key => $paramSchema) {
+                switch ($paramSchema->paramType) {
+                    case 'IN':
+                        $this->bindValue($statement, ':' . $paramSchema->name, array_get($values, $key));
+                        break;
+                    case 'INOUT':
+                    case 'OUT':
+                        // Note that using the dblib driver doesn't allow binding of output parameters,
+                        // and also requires declaration prior to and selecting after to retrieve them.
+                        break;
+                }
             }
+        } else {
+            parent::doRoutineBinding($statement, $paramSchemas, $values);
         }
     }
 
