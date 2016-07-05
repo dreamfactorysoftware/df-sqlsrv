@@ -892,7 +892,7 @@ EOD;
                         throw new BadRequestException("Procedure requires value for parameter '{$paramSchema->name}'.");
                     }
 
-                    $values[$key] = $value;
+                    $values[$key] = $this->formatValue($value, $paramSchema->type);
                     break;
                 case 'INOUT':
                     // leave it to microsoft to report OUT parameters as INOUT, even if they don't expect an input
@@ -913,16 +913,17 @@ EOD;
 
                     if (!$dblib && !array_key_exists($key, $values)) {
                         // stick something in there for binding
-                        $values[$key] = null;
+                        $values[$key] = $this->formatValue(null, $paramSchema->type);
+                    } elseif (array_key_exists($key, $values)) {
+                        $values[$key] = $this->formatValue($values[$key], $paramSchema->type);
                     }
                     break;
                 case 'OUT':
-                    $values[$key] = null;
+                    $values[$key] = $this->formatValue(null, $paramSchema->type);
                     break;
                 default:
                     break;
             }
-            $values[$key] = $this->formatValue($values[$key], $paramSchema->type);
         }
 
         return $values;
