@@ -725,7 +725,8 @@ EOD;
      * Extracts the default value for the column.
      * The value is typecasted to correct PHP type.
      *
-     * @param mixed $defaultValue the default value obtained from metadata
+     * @param ColumnSchema $field
+     * @param mixed        $defaultValue the default value obtained from metadata
      */
     public function extractDefault(ColumnSchema &$field, $defaultValue)
     {
@@ -750,7 +751,8 @@ EOD;
      * Extracts size, precision and scale information from column's DB type.
      * We do nothing here, since sizes and precisions have been computed before.
      *
-     * @param string $dbType the column's DB type
+     * @param ColumnSchema $field
+     * @param string       $dbType the column's DB type
      */
     public function extractLimit(ColumnSchema &$field, $dbType)
     {
@@ -759,7 +761,8 @@ EOD;
     /**
      * Converts the input value to the type that this column is of.
      *
-     * @param mixed $value input value
+     * @param ColumnSchema $field
+     * @param mixed        $value input value
      *
      * @return mixed converted value
      */
