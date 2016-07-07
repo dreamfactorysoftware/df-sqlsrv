@@ -2,6 +2,7 @@
 namespace DreamFactory\Core\SqlSrv\Database\Schema;
 
 use DreamFactory\Core\Database\Schema\ColumnSchema;
+use DreamFactory\Core\Database\Schema\RoutineSchema;
 use DreamFactory\Core\Database\Schema\Schema;
 use DreamFactory\Core\Database\Schema\TableSchema;
 use DreamFactory\Core\Enums\DbSimpleTypes;
@@ -320,7 +321,10 @@ class SqlServerSchema extends Schema
         if ($value !== null) {
             $value = (int)($value) - 1;
         } else {
-            $value = (int)$this->selectValue("SELECT MAX([{$table->primaryKey}]) FROM {$table->rawName}");
+            $sql = <<<MYSQL
+SELECT MAX([{$table->primaryKey}]) FROM {$table->rawName}
+MYSQL;
+            $value = (int)$this->selectValue($sql);
         }
         $name = strtr($table->rawName, ['[' => '', ']' => '']);
         $this->connection->statement("DBCC CHECKIDENT ('$name',RESEED,$value)");
@@ -565,12 +569,12 @@ EOD;
 
     protected function findSchemaNames()
     {
-        $sql = <<<SQL
+        $sql = <<<MYSQL
 SELECT schema_name FROM INFORMATION_SCHEMA.SCHEMATA WHERE schema_name NOT IN
 ('INFORMATION_SCHEMA', 'sys', 'db_owner', 'db_accessadmin', 'db_securityadmin',
 'db_ddladmin', 'db_backupoperator', 'db_datareader', 'db_datawriter',
 'db_denydatareader', 'db_denydatawriter')
-SQL;
+MYSQL;
 
         return $this->selectColumn($sql);
     }
@@ -671,13 +675,10 @@ EOD;
     public function alterColumn($table, $column, $definition)
     {
         $definition = $this->getColumnType($definition);
-        $sql =
-            'ALTER TABLE ' .
-            $this->quoteTableName($table) .
-            ' ALTER COLUMN ' .
-            $this->quoteColumnName($column) .
-            ' ' .
-            $this->getColumnType($definition);
+        $sql = <<<MYSQL
+ALTER TABLE {$this->quoteTableName($table)}
+ALTER COLUMN {$this->quoteColumnName($column)} {$this->getColumnType($definition)}
+MYSQL;
 
         return $sql;
     }
@@ -803,7 +804,7 @@ EOD;
     /**
      * @inheritdoc
      */
-    protected function getProcedureStatement($routine, array $param_schemas, array &$values)
+    protected function getProcedureStatement(RoutineSchema $routine, array $param_schemas, array &$values)
     {
         // Note that using the dblib driver doesn't allow binding of output parameters,
         // and also requires declaration prior to and selecting after to retrieve them.
@@ -838,7 +839,7 @@ EOD;
                 }
             }
 
-            return "$prefix EXEC $routine $paramStr; $postfix";
+            return "$prefix EXEC {$routine->rawName} $paramStr; $postfix";
         } else {
             $paramStr = '';
             foreach ($param_schemas as $key => $paramSchema) {
@@ -854,7 +855,7 @@ EOD;
                 }
             }
 
-            return "EXEC $routine $paramStr";
+            return "EXEC {$routine->rawName} $paramStr";
         }
     }
 
@@ -953,13 +954,16 @@ EOD;
         }
     }
 
-    protected function getFunctionStatement($routine, $param_schemas, $values)
+    protected function getFunctionStatement(RoutineSchema $routine, array $param_schemas, array &$values)
     {
         // must always use schema in function name
-        if (0 !== strpos($routine, '.')) {
-            $routine = static::DEFAULT_SCHEMA . '.' . $routine;
+        $name = $routine->rawName;
+        if (0 !== strpos($name, '.')) {
+            $name = static::DEFAULT_SCHEMA . '.' . $name;
         }
 
-        return parent::getFunctionStatement($routine, $param_schemas, $values);
+        $paramStr = $this->getRoutineParamString($param_schemas, $values);
+
+        return "SELECT $name($paramStr) AS " . $this->quoteColumnName('output');
     }
 }
