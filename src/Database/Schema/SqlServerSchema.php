@@ -820,7 +820,11 @@ MYSQL;
                     case 'INOUT':
                         $pName = '@' . $paramSchema->name;
                         $paramStr .= (empty($paramStr) ? $pName : ", $pName") . " OUTPUT";
-                        $prefix .= "DECLARE $pName {$paramSchema->dbType};";
+                        $paramType = $paramSchema->dbType;
+                        if (!empty($paramSchema->length)) {
+                            $paramType .= '(' . $paramSchema->length .')';
+                        }
+                        $prefix .= "DECLARE $pName $paramType;";
                         if (array_key_exists($key, $values)) {
                             // workaround for MS reporting OUT-behaving params as INOUT
                             $prefix .= "SET $pName = " . array_get($values, $key) . ';';
@@ -830,7 +834,11 @@ MYSQL;
                     case 'OUT':
                         $pName = '@' . $paramSchema->name;
                         $paramStr .= (empty($paramStr) ? $pName : ", $pName") . " OUTPUT";
-                        $prefix .= "DECLARE $pName {$paramSchema->dbType};";
+                        $paramType = $paramSchema->dbType;
+                        if (!empty($paramSchema->length)) {
+                            $paramType .= '(' . $paramSchema->length .')';
+                        }
+                        $prefix .= "DECLARE $pName $paramType;";
                         $postfix .= "SELECT $pName as " . $this->quoteColumnName($paramSchema->name) . ';';
                         break;
                     default:
