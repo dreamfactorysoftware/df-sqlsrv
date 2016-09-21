@@ -348,6 +348,7 @@ MYSQL;
         $db = $this->connection;
         foreach ($this->normalTables[$schema] as $table) {
             $tableName = $this->quoteTableName($table->name);
+            /** @noinspection SqlNoDataSourceInspection */
             $db->statement("ALTER TABLE $tableName $enable CONSTRAINT ALL");
         }
     }
@@ -371,7 +372,7 @@ MYSQL;
      *
      * @param TableSchema $table table
      *
-     * @return mixed primary keys (null if no pk, string if only 1 column pk, or array if composite pk)
+     * @return void primary keys (null if no pk, string if only 1 column pk, or array if composite pk)
      */
     protected function findPrimaryKey($table)
     {
@@ -538,28 +539,33 @@ EOD;
     {
         $c = new ColumnSchema(['name' => $column['name']]);
         $c->rawName = $this->quoteColumnName($c->name);
-        $c->allowNull = $column['is_nullable'] == '1';
-        $c->isPrimaryKey = $column['is_primary_key'] == '1';
-        $c->isUnique = $column['is_unique'] == '1';
-        $c->isIndex = $column['constraint_name'] !== null;
+        $c->allowNull = boolval($column['is_nullable']);
+        $c->isPrimaryKey = boolval($column['is_primary_key']);
+        $c->isUnique = boolval($column['is_unique']);
+        $c->isIndex = boolval($column['constraint_name']);
         $c->dbType = $column['type'];
-        if ($column['precision'] !== '0') {
-            if ($column['scale'] !== '0') {
-                // We have a numeric datatype
-                $c->precision = (int)$column['precision'];
-                $c->scale = (int)$column['scale'];
-            } else {
-                $c->size = (int)$column['precision'];
+        $c->precision = intval($column['precision']);
+        $c->scale = intval($column['scale']);
+        // all of this is for consistency across drivers
+        if ($c->precision > 0) {
+            if ($c->scale <= 0) {
+                $c->size = $c->precision;
+                $c->scale = null;
             }
         } else {
-            $c->size = ($column['max_length'] !== '-1') ? (int)$column['max_length'] : null;
+            $c->precision = null;
+            $c->scale = null;
+            $c->size = intval($column['max_length']);
+            if ($c->size <= 0) {
+                $c->size = null;
+            }
         }
-        $c->autoIncrement = ($column['is_identity'] === '1');
-        $c->comment = (isset($column['Comment']) ? ($column['Comment'] === null ? '' : $column['Comment']) : '');
+        $c->autoIncrement = boolval($column['is_identity']);
+//        $c->comment = strval($column['comment']);
 
-        $c->fixedLength = $this->extractFixedLength($column['type']);
-        $c->supportsMultibyte = $this->extractMultiByteSupport($column['type']);
-        $this->extractType($c, $column['type']);
+        $c->fixedLength = $this->extractFixedLength($c->dbType);
+        $c->supportsMultibyte = $this->extractMultiByteSupport($c->dbType);
+        $this->extractType($c, $c->dbType);
         if (isset($column['default_definition'])) {
             $this->extractDefault($c, $column['default_definition']);
         }
@@ -698,6 +704,13 @@ MYSQL;
             case 'rowversion':
             case 'timestamp':
                 throw new ForbiddenException('Field type not able to be set.');
+            case 'uniqueidentifier':
+                if (36 === strlen($value)) {
+                    $value = $this->connection->raw("CONVERT(uniqueidentifier, '$value')");
+                } elseif (0 === strcasecmp('null', $value)) {
+                    $value = null;
+                }
+                break;
         }
 
         return $value;
@@ -785,16 +798,18 @@ MYSQL;
         switch ($field->dbType) {
 //            case 'datetime':
 //            case 'datetimeoffset':
-//                return "(CONVERT(nvarchar(30), $name, 127)) AS $alias";
+//                return $this->connection->raw("(CONVERT(nvarchar(30), $name, 127)) AS $alias");
             case 'image':
-                return "(CONVERT(varbinary(max), $name)) AS $alias";
+                return $this->connection->raw("(CONVERT(varbinary(max), $name)) AS $alias");
             case 'timestamp': // deprecated, not a real timestamp, but internal rowversion
             case 'rowversion':
-                return "CAST($name AS BIGINT) AS $alias";
+                return $this->connection->raw("CAST($name AS BIGINT) AS $alias");
             case 'geometry':
             case 'geography':
             case 'hierarchyid':
-                return "($name.ToString()) AS $alias";
+                return $this->connection->raw("($name.ToString()) AS $alias");
+            case 'uniqueidentifier':
+                return $this->connection->raw("(CONVERT(varchar(255), $name)) AS $alias");
             default :
                 return parent::parseFieldForSelect($field, $as_quoted_string);
         }
@@ -822,7 +837,7 @@ MYSQL;
                         $paramStr .= (empty($paramStr) ? $pName : ", $pName") . " OUTPUT";
                         $paramType = $paramSchema->dbType;
                         if (!empty($paramSchema->length)) {
-                            $paramType .= '(' . $paramSchema->length .')';
+                            $paramType .= '(' . $paramSchema->length . ')';
                         }
                         $prefix .= "DECLARE $pName $paramType;";
                         if (array_key_exists($key, $values)) {
@@ -836,7 +851,7 @@ MYSQL;
                         $paramStr .= (empty($paramStr) ? $pName : ", $pName") . " OUTPUT";
                         $paramType = $paramSchema->dbType;
                         if (!empty($paramSchema->length)) {
-                            $paramType .= '(' . $paramSchema->length .')';
+                            $paramType .= '(' . $paramSchema->length . ')';
                         }
                         $prefix .= "DECLARE $pName $paramType;";
                         $postfix .= "SELECT $pName as " . $this->quoteColumnName($paramSchema->name) . ';';
