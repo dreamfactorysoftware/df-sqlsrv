@@ -19,6 +19,13 @@ class SqlSrvDbConfig extends SqlDbConfig
         return 1433;
     }
 
+    protected function getConnectionFields()
+    {
+        $fields = parent::getConnectionFields();
+
+        return array_merge($fields, ['charset', 'readonly', 'pooling', 'appname']);
+    }
+
     public static function getDefaultConnectionInfo()
     {
         $defaults = parent::getDefaultConnectionInfo();
