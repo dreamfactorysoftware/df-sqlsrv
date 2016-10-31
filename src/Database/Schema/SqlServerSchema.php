@@ -354,20 +354,6 @@ MYSQL;
     }
 
     /**
-     * @inheritdoc
-     */
-    protected function loadTable(TableSchema $table)
-    {
-        if (!$this->findColumns($table)) {
-            return null;
-        }
-
-        $this->findConstraints($table);
-
-        return $table;
-    }
-
-    /**
      * Gets the primary key column(s) details for the given table.
      *
      * @param TableSchema $table table
@@ -425,21 +411,13 @@ EOD;
         $table->primaryKey = $primary;
     }
 
-    /**
-     * Collects the foreign key column details for the given table.
-     * Also, collects the foreign tables and columns that reference the given table.
-     *
-     * @param TableSchema $table the table metadata
-     */
-    protected function findConstraints($table)
+    protected function findTableReferences()
     {
-        $this->findPrimaryKey($table);
-
         $rc = 'INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS';
         $kcu = 'INFORMATION_SCHEMA.KEY_COLUMN_USAGE';
-        if (isset($table->catalogName)) {
-            $kcu = $table->catalogName . '.' . $kcu;
-            $rc = $table->catalogName . '.' . $rc;
+        if (isset($this->catalogName)) {
+            $kcu = $this->catalogName . '.' . $kcu;
+            $rc = $this->catalogName . '.' . $rc;
         }
 
         //From http://msdn2.microsoft.com/en-us/library/aa175805(SQL.80).aspx
@@ -463,9 +441,7 @@ EOD;
 		   AND KCU2.ORDINAL_POSITION = KCU1.ORDINAL_POSITION
 EOD;
 
-        $constraints = $this->connection->select($sql);
-
-        $this->buildTableRelations($table, $constraints);
+        return $this->connection->select($sql);
     }
 
     /**
@@ -475,7 +451,7 @@ EOD;
      *
      * @return boolean whether the table exists in the database
      */
-    protected function findColumns($table)
+    protected function findColumns(TableSchema $table)
     {
         $columnsTable = $table->rawName;
 
@@ -524,6 +500,8 @@ EOD;
                 $table->sequenceName = $table->name;
             }
         }
+
+        $this->findPrimaryKey($table);
 
         return true;
     }

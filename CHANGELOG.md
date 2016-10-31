@@ -6,6 +6,7 @@ This project adheres to [Semantic Versioning](http://semver.org/).
 ### Added
 
 ### Changed
+- Virtual relationship rework to support all relationship types
 
 ### Fixed
 
