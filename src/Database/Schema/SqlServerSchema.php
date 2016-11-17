@@ -5,6 +5,7 @@ use DreamFactory\Core\Database\Schema\ColumnSchema;
 use DreamFactory\Core\Database\Schema\RoutineSchema;
 use DreamFactory\Core\Database\Schema\Schema;
 use DreamFactory\Core\Database\Schema\TableSchema;
+use DreamFactory\Core\Enums\DbResourceTypes;
 use DreamFactory\Core\Enums\DbSimpleTypes;
 use DreamFactory\Core\Exceptions\BadRequestException;
 use DreamFactory\Core\Exceptions\ForbiddenException;
@@ -14,6 +15,11 @@ use DreamFactory\Core\Exceptions\ForbiddenException;
  */
 class SqlServerSchema extends Schema
 {
+    /**
+     * Underlying database provides field-level schema, i.e. SQL (true) vs NoSQL (false)
+     */
+    const PROVIDES_FIELD_SCHEMA = true;
+
     const DEFAULT_SCHEMA = 'dbo';
 
     /**
@@ -31,6 +37,19 @@ class SqlServerSchema extends Schema
     public function getDefaultSchema($refresh = false)
     {
         return static::DEFAULT_SCHEMA;
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function getSupportedResourceTypes()
+    {
+        return [
+            DbResourceTypes::TYPE_TABLE,
+            DbResourceTypes::TYPE_VIEW,
+            DbResourceTypes::TYPE_PROCEDURE,
+            DbResourceTypes::TYPE_FUNCTION
+        ];
     }
 
     protected function translateSimpleColumnTypes(array &$info)
@@ -354,20 +373,6 @@ MYSQL;
     }
 
     /**
-     * @inheritdoc
-     */
-    protected function loadTable(TableSchema $table)
-    {
-        if (!$this->findColumns($table)) {
-            return null;
-        }
-
-        $this->findConstraints($table);
-
-        return $table;
-    }
-
-    /**
      * Gets the primary key column(s) details for the given table.
      *
      * @param TableSchema $table table
@@ -376,70 +381,15 @@ MYSQL;
      */
     protected function findPrimaryKey($table)
     {
-        $kcu = 'INFORMATION_SCHEMA.KEY_COLUMN_USAGE';
-        $tc = 'INFORMATION_SCHEMA.TABLE_CONSTRAINTS';
-        if (isset($table->catalogName)) {
-            $kcu = $table->catalogName . '.' . $kcu;
-            $tc = $table->catalogName . '.' . $tc;
-        }
-
-        $sql = <<<EOD
-		SELECT k.column_name field_name
-			FROM {$this->quoteTableName($kcu)} k
-		    LEFT JOIN {$this->quoteTableName($tc)} c
-		      ON k.table_name = c.table_name
-		     AND k.constraint_name = c.constraint_name
-		   WHERE c.constraint_type ='PRIMARY KEY'
-		   	    AND k.table_name = :table
-				AND k.table_schema = :schema
-EOD;
-        $primary =
-            $this->selectColumn($sql, [':table' => $table->tableName, ':schema' => $table->schemaName]);
-        switch (count($primary)) {
-            case 0: // No primary key on table
-                $primary = null;
-                break;
-            case 1: // Only 1 primary key
-                $primary = $primary[0];
-                $column = $table->getColumn($primary);
-                if (isset($column)) {
-                    $column->isPrimaryKey = true;
-                    if ((DbSimpleTypes::TYPE_INTEGER === $column->type) && $column->autoIncrement) {
-                        $column->type = DbSimpleTypes::TYPE_ID;
-                    }
-                    $table->addColumn($column);
-                }
-                break;
-            default:
-                if (is_array($primary)) {
-                    foreach ($primary as $key) {
-                        $column = $table->getColumn($key);
-                        if (isset($column)) {
-                            $column->isPrimaryKey = true;
-                            $table->addColumn($column);
-                        }
-                    }
-                }
-                break;
-        }
-        $table->primaryKey = $primary;
     }
 
-    /**
-     * Collects the foreign key column details for the given table.
-     * Also, collects the foreign tables and columns that reference the given table.
-     *
-     * @param TableSchema $table the table metadata
-     */
-    protected function findConstraints($table)
+    protected function findTableReferences()
     {
-        $this->findPrimaryKey($table);
-
         $rc = 'INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS';
         $kcu = 'INFORMATION_SCHEMA.KEY_COLUMN_USAGE';
-        if (isset($table->catalogName)) {
-            $kcu = $table->catalogName . '.' . $kcu;
-            $rc = $table->catalogName . '.' . $rc;
+        if (isset($this->catalogName)) {
+            $kcu = $this->catalogName . '.' . $kcu;
+            $rc = $this->catalogName . '.' . $rc;
         }
 
         //From http://msdn2.microsoft.com/en-us/library/aa175805(SQL.80).aspx
@@ -463,22 +413,14 @@ EOD;
 		   AND KCU2.ORDINAL_POSITION = KCU1.ORDINAL_POSITION
 EOD;
 
-        $constraints = $this->connection->select($sql);
-
-        $this->buildTableRelations($table, $constraints);
+        return $this->connection->select($sql);
     }
 
     /**
-     * Collects the table column metadata.
-     *
-     * @param TableSchema $table the table metadata
-     *
-     * @return boolean whether the table exists in the database
+     * @inheritdoc
      */
-    protected function findColumns($table)
+    protected function findColumns(TableSchema $table)
     {
-        $columnsTable = $table->rawName;
-
 //        $isAzure = ( false !== strpos( $this->connection->connectionString, '.database.windows.net' ) );
 //        $sql = "SELECT t1.*, columnproperty(object_id(t1.table_schema+'.'+t1.table_name), t1.column_name, 'IsIdentity') AS IsIdentity";
 //        if ( !$isAzure )
@@ -495,37 +437,47 @@ EOD;
 //        }
 //        $sql .= " WHERE " . join( ' AND ', $where );
 
-        $sql =
-            "SELECT col.name, col.precision, col.scale, col.max_length, col.collation_name, col.is_nullable, col.is_identity" .
-            ", coltype.name as type, coldef.definition as default_definition, idx.name as constraint_name, idx.is_unique, idx.is_primary_key" .
-            " FROM sys.columns AS col" .
-            " LEFT OUTER JOIN sys.types AS coltype ON coltype.user_type_id = col.user_type_id" .
-            " LEFT OUTER JOIN sys.default_constraints AS coldef ON coldef.parent_column_id = col.column_id AND coldef.parent_object_id = col.object_id" .
-            " LEFT OUTER JOIN sys.index_columns AS idx_cols ON idx_cols.column_id = col.column_id AND idx_cols.object_id = col.object_id" .
-            " LEFT OUTER JOIN sys.indexes AS idx ON idx_cols.index_id = idx.index_id AND idx.object_id = col.object_id" .
-            " WHERE col.object_id = object_id('" .
-            $columnsTable .
-            "')";
+        $sql = <<<MYSQL
+SELECT col.name, col.precision, col.scale, col.max_length, col.collation_name, col.is_nullable, col.is_identity,
+       coltype.name as type, coldef.definition as default_definition, idx.name as constraint_name, idx.is_unique, idx.is_primary_key
+FROM sys.columns AS col
+LEFT OUTER JOIN sys.types AS coltype ON coltype.user_type_id = col.user_type_id
+LEFT OUTER JOIN sys.default_constraints AS coldef ON coldef.parent_column_id = col.column_id AND coldef.parent_object_id = col.object_id
+LEFT OUTER JOIN sys.index_columns AS idx_cols ON idx_cols.column_id = col.column_id AND idx_cols.object_id = col.object_id
+LEFT OUTER JOIN sys.indexes AS idx ON idx_cols.index_id = idx.index_id AND idx.object_id = col.object_id
+WHERE col.object_id = object_id('{$table->rawName}')
+MYSQL;
 
-        try {
-            $columns = $this->connection->select($sql);
-            if (empty($columns)) {
-                return false;
-            }
-        } catch (\Exception $e) {
-            return false;
-        }
+        $columns = $this->connection->select($sql);
 
-        foreach ($columns as $column) {
-            $column = array_change_key_case((array)$column, CASE_LOWER);
-            $c = $this->createColumn($column);
-            $table->addColumn($c);
-            if ($c->autoIncrement && $table->sequenceName === null) {
-                $table->sequenceName = $table->name;
-            }
-        }
+//        $kcu = 'INFORMATION_SCHEMA.KEY_COLUMN_USAGE';
+//        $tc = 'INFORMATION_SCHEMA.TABLE_CONSTRAINTS';
+//        if (isset($table->catalogName)) {
+//            $kcu = $table->catalogName . '.' . $kcu;
+//            $tc = $table->catalogName . '.' . $tc;
+//        }
+//
+//        $sql = <<<EOD
+//		SELECT k.column_name field_name
+//			FROM {$this->quoteTableName($kcu)} k
+//		    LEFT JOIN {$this->quoteTableName($tc)} c
+//		      ON k.table_name = c.table_name
+//		     AND k.constraint_name = c.constraint_name
+//		   WHERE c.constraint_type ='PRIMARY KEY'
+//		   	    AND k.table_name = :table
+//				AND k.table_schema = :schema
+//EOD;
+//        if (!empty($result = $this->selectColumn($sql, $params))) {
+//            foreach ($result as $primary) {
+//                foreach ($columns as &$column) {
+//                    if ($primary === array_get($column, 'name')) {
+//                        $column['is_primary_key'] = true;
+//                    }
+//                }
+//            }
+//        }
 
-        return true;
+        return $columns;
     }
 
     /**
@@ -788,7 +740,7 @@ MYSQL;
         }
     }
 
-    public function parseFieldForSelect(ColumnSchema $field, $as_quoted_string = false)
+    public function parseFieldForSelect($field, $as_quoted_string = false)
     {
         $name = ($as_quoted_string) ? $field->rawName : $field->name;
         $alias = $field->getName(true);
