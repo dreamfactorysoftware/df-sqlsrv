@@ -7,7 +7,6 @@ use DreamFactory\Core\Database\Schema\Schema;
 use DreamFactory\Core\Database\Schema\TableSchema;
 use DreamFactory\Core\Enums\DbResourceTypes;
 use DreamFactory\Core\Enums\DbSimpleTypes;
-use DreamFactory\Core\Exceptions\BadRequestException;
 use DreamFactory\Core\Exceptions\ForbiddenException;
 
 /**
@@ -788,13 +787,16 @@ MYSQL;
                         $pName = '@' . $paramSchema->name;
                         $paramStr .= (empty($paramStr) ? $pName : ", $pName") . " OUTPUT";
                         $paramType = $paramSchema->dbType;
-                        if (!empty($paramSchema->length)) {
+                        if ((DbSimpleTypes::TYPE_INTEGER !== $paramSchema->type) && !empty($paramSchema->length)) {
                             $paramType .= '(' . $paramSchema->length . ')';
                         }
                         $prefix .= "DECLARE $pName $paramType;";
                         if (array_key_exists($key, $values)) {
                             // workaround for MS reporting OUT-behaving params as INOUT
-                            $prefix .= "SET $pName = " . array_get($values, $key) . ';';
+                            if (is_null($value = array_get($values, $key))) {
+                                $value = 'NULL';
+                            }
+                            $prefix .= "SET $pName = $value;";
                         }
                         $postfix .= "SELECT $pName as " . $this->quoteColumnName($paramSchema->name) . ';';
                         break;
@@ -831,80 +833,6 @@ MYSQL;
 
             return "EXEC {$routine->rawName} $paramStr";
         }
-    }
-
-    protected function determineRoutineValues(array $param_schemas, array $in_params)
-    {
-        // Note that using the dblib driver doesn't allow binding of output parameters,
-        // and also requires declaration prior to and selecting after to retrieve them.
-        $dblib = in_array('dblib', \PDO::getAvailableDrivers());
-        // check associative
-        $keys = array_keys($in_params);
-        $isAssociative = (array_keys($keys) !== $keys);
-        $in_params = array_change_key_case($in_params, CASE_LOWER);
-        $values = [];
-        $index = -1;
-        // key is lowercase index
-        foreach ($param_schemas as $key => $paramSchema) {
-            $index++;
-            switch ($paramSchema->paramType) {
-                case 'IN':
-                    $value = null;
-                    if ($isAssociative) {
-                        if (array_key_exists($key, $in_params)) {
-                            $value = $in_params[$key];
-                        } elseif (empty($paramSchema->defaultValue)) {
-                            throw new BadRequestException("Routine requires value for parameter '{$paramSchema->name}'.");
-                        }
-                    } elseif (array_key_exists($index, $in_params)) {
-                        if (is_array($in_params[$index])) {
-                            if (array_key_exists('value', $in_params[$index])) {
-                                $value = $in_params[$index]['value'];
-                            } elseif (empty($paramSchema->defaultValue)) {
-                                throw new BadRequestException("Routine requires value for parameter '{$paramSchema->name}'.");
-                            }
-                        } else {
-                            $value = $in_params[$index];
-                        }
-                    } elseif (empty($paramSchema->defaultValue)) {
-                        throw new BadRequestException("Routine requires value for parameter '{$paramSchema->name}'.");
-                    }
-
-                    $values[$key] = $this->formatValue($value, $paramSchema->type);
-                    break;
-                case 'INOUT':
-                    // leave it to microsoft to report OUT parameters as INOUT, even if they don't expect an input
-                    // workaround is to assume the client passes them in if needed, otherwise don't throw exception
-                    if ($isAssociative) {
-                        if (array_key_exists($key, $in_params)) {
-                            $values[$key] = $in_params[$key];
-                        }
-                    } elseif (array_key_exists($index, $in_params)) {
-                        if (is_array($in_params[$index])) {
-                            if (array_key_exists('value', $in_params[$index])) {
-                                $values[$key] = $in_params[$index]['value'];
-                            }
-                        } else {
-                            $values[$key] = $in_params[$index];
-                        }
-                    }
-
-                    if (!$dblib && !array_key_exists($key, $values)) {
-                        // stick something in there for binding
-                        $values[$key] = $this->formatValue(null, $paramSchema->type);
-                    } elseif (array_key_exists($key, $values)) {
-                        $values[$key] = $this->formatValue($values[$key], $paramSchema->type);
-                    }
-                    break;
-                case 'OUT':
-                    $values[$key] = $this->formatValue(null, $paramSchema->type);
-                    break;
-                default:
-                    break;
-            }
-        }
-
-        return $values;
     }
 
     protected function doRoutineBinding($statement, array $paramSchemas, array &$values)
