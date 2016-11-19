@@ -7,6 +7,10 @@ This project adheres to [Semantic Versioning](http://semver.org/).
 ### Changed
 ### Fixed
 
+## [0.6.1] - 2016-11-18
+### Fixed
+- Routine parameter searching and binding to use base class.
+
 ## [0.6.0] - 2016-11-17
 ### Changed
 - Virtual relationship rework to support all relationship types
@@ -38,7 +42,8 @@ This project adheres to [Semantic Versioning](http://semver.org/).
 ## 0.3.0 - 2016-05-27
 First official release working with the new [df-core](https://github.com/dreamfactorysoftware/df-core) library.
 
-[Unreleased]: https://github.com/dreamfactorysoftware/df-sqlsrv/compare/0.6.0...HEAD
+[Unreleased]: https://github.com/dreamfactorysoftware/df-sqlsrv/compare/0.6.1...HEAD
+[0.6.1]: https://github.com/dreamfactorysoftware/df-sqlsrv/compare/0.6.0...0.6.1
 [0.6.0]: https://github.com/dreamfactorysoftware/df-sqlsrv/compare/0.5.0...0.6.0
 [0.5.0]: https://github.com/dreamfactorysoftware/df-sqlsrv/compare/0.4.1...0.5.0
 [0.4.1]: https://github.com/dreamfactorysoftware/df-sqlsrv/compare/0.4.0...0.4.1
