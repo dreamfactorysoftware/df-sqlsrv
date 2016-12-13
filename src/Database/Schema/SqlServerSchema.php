@@ -3,7 +3,7 @@ namespace DreamFactory\Core\SqlSrv\Database\Schema;
 
 use DreamFactory\Core\Database\Schema\ColumnSchema;
 use DreamFactory\Core\Database\Schema\RoutineSchema;
-use DreamFactory\Core\Database\Schema\Schema;
+use DreamFactory\Core\Database\Components\Schema;
 use DreamFactory\Core\Database\Schema\TableSchema;
 use DreamFactory\Core\Enums\DbResourceTypes;
 use DreamFactory\Core\Enums\DbSimpleTypes;
@@ -340,11 +340,11 @@ class SqlServerSchema extends Schema
             $value = (int)($value) - 1;
         } else {
             $sql = <<<MYSQL
-SELECT MAX([{$table->primaryKey}]) FROM {$table->rawName}
+SELECT MAX([{$table->primaryKey}]) FROM {$table->quotedName}
 MYSQL;
             $value = (int)$this->selectValue($sql);
         }
-        $name = strtr($table->rawName, ['[' => '', ']' => '']);
+        $name = strtr($table->quotedName, ['[' => '', ']' => '']);
         $this->connection->statement("DBCC CHECKIDENT ('$name',RESEED,$value)");
     }
 
@@ -444,7 +444,7 @@ LEFT OUTER JOIN sys.types AS coltype ON coltype.user_type_id = col.user_type_id
 LEFT OUTER JOIN sys.default_constraints AS coldef ON coldef.parent_column_id = col.column_id AND coldef.parent_object_id = col.object_id
 LEFT OUTER JOIN sys.index_columns AS idx_cols ON idx_cols.column_id = col.column_id AND idx_cols.object_id = col.object_id
 LEFT OUTER JOIN sys.indexes AS idx ON idx_cols.index_id = idx.index_id AND idx.object_id = col.object_id
-WHERE col.object_id = object_id('{$table->rawName}')
+WHERE col.object_id = object_id('{$table->quotedName}')
 MYSQL;
 
         $columns = $this->connection->select($sql);
@@ -489,7 +489,7 @@ MYSQL;
     protected function createColumn($column)
     {
         $c = new ColumnSchema(['name' => $column['name']]);
-        $c->rawName = $this->quoteColumnName($c->name);
+        $c->quotedName = $this->quoteColumnName($c->name);
         $c->allowNull = boolval($column['is_nullable']);
         $c->isPrimaryKey = boolval($column['is_primary_key']);
         $c->isUnique = boolval($column['is_unique']);
@@ -537,24 +537,12 @@ MYSQL;
     }
 
     /**
-     * Returns all table names in the database.
-     *
-     * @param string $schema the schema of the tables. Defaults to empty string, meaning the current or default schema.
-     *                       If not empty, the returned table names will be prefixed with the schema name.
-     * @param bool   $include_views
-     *
-     * @return array all table names in the database.
+     * @inheritdoc
      */
-    protected function findTableNames($schema = '', $include_views = true)
+    protected function findTableNames($schema = '')
     {
-        if ($include_views) {
-            $condition = "TABLE_TYPE in ('BASE TABLE','VIEW')";
-        } else {
-            $condition = "TABLE_TYPE='BASE TABLE'";
-        }
-
         $sql = <<<EOD
-SELECT TABLE_NAME, TABLE_SCHEMA, TABLE_TYPE FROM [INFORMATION_SCHEMA].[TABLES] WHERE $condition
+SELECT TABLE_NAME, TABLE_SCHEMA FROM [INFORMATION_SCHEMA].[TABLES] WHERE TABLE_TYPE = 'BASE TABLE'
 EOD;
 
         if (!empty($schema)) {
@@ -563,7 +551,7 @@ EOD;
 
         $rows = $this->connection->select($sql);
 
-        $defaultSchema = $this->getDefaultSchema();
+        $defaultSchema = $this->getNamingSchema();
         $addSchema = (!empty($schema) && ($defaultSchema !== $schema));
 
         $names = [];
@@ -571,16 +559,44 @@ EOD;
             $row = array_change_key_case((array)$row, CASE_UPPER);
             $schemaName = isset($row['TABLE_SCHEMA']) ? $row['TABLE_SCHEMA'] : '';
             $tableName = isset($row['TABLE_NAME']) ? $row['TABLE_NAME'] : '';
-            if ($addSchema) {
-                $name = $schemaName . '.' . $tableName;
-                $rawName = $this->quoteTableName($schemaName) . '.' . $this->quoteTableName($tableName);;
-            } else {
-                $name = $tableName;
-                $rawName = $this->quoteTableName($tableName);
-            }
-            $settings = compact('schemaName', 'tableName', 'name', 'rawName');
-            $settings['isView'] = (0 === strcasecmp('VIEW', $row['TABLE_TYPE']));
+            $internalName = $schemaName . '.' . $tableName;
+            $name = ($addSchema) ? $internalName : $tableName;
+            $quotedName = $this->quoteTableName($schemaName) . '.' . $this->quoteTableName($tableName);;
+            $settings = compact('schemaName', 'tableName', 'name', 'internalName','quotedName');
+            $names[strtolower($name)] = new TableSchema($settings);
+        }
 
+        return $names;
+    }
+
+    /**
+     * @inheritdoc
+     */
+    protected function findViewNames($schema = '')
+    {
+        $sql = <<<EOD
+SELECT TABLE_NAME, TABLE_SCHEMA FROM [INFORMATION_SCHEMA].[TABLES] WHERE TABLE_TYPE = 'VIEW'
+EOD;
+
+        if (!empty($schema)) {
+            $sql .= " AND TABLE_SCHEMA = '$schema'";
+        }
+
+        $rows = $this->connection->select($sql);
+
+        $defaultSchema = $this->getNamingSchema();
+        $addSchema = (!empty($schema) && ($defaultSchema !== $schema));
+
+        $names = [];
+        foreach ($rows as $row) {
+            $row = array_change_key_case((array)$row, CASE_UPPER);
+            $schemaName = isset($row['TABLE_SCHEMA']) ? $row['TABLE_SCHEMA'] : '';
+            $tableName = isset($row['TABLE_NAME']) ? $row['TABLE_NAME'] : '';
+            $internalName = $schemaName . '.' . $tableName;
+            $name = ($addSchema) ? $internalName : $tableName;
+            $quotedName = $this->quoteTableName($schemaName) . '.' . $this->quoteTableName($tableName);
+            $settings = compact('schemaName', 'tableName', 'name', 'internalName','quotedName');
+            $settings['isView'] = true;
             $names[strtolower($name)] = new TableSchema($settings);
         }
 
@@ -627,7 +643,6 @@ EOD;
      *                           null'.
      *
      * @return string the SQL statement for changing the definition of a column.
-     * @since 1.1.6
      */
     public function alterColumn($table, $column, $definition)
     {
@@ -673,7 +688,7 @@ MYSQL;
      * @param ColumnSchema $column
      * @param string       $dbType DB type
      */
-    public function extractType(ColumnSchema &$column, $dbType)
+    public function extractType(ColumnSchema $column, $dbType)
     {
         parent::extractType($column, $dbType);
 
@@ -692,7 +707,7 @@ MYSQL;
      * @param ColumnSchema $field
      * @param mixed        $defaultValue the default value obtained from metadata
      */
-    public function extractDefault(ColumnSchema &$field, $defaultValue)
+    public function extractDefault(ColumnSchema $field, $defaultValue)
     {
         if ($defaultValue == '(NULL)') {
             $field->defaultValue = null;
@@ -718,7 +733,7 @@ MYSQL;
      * @param ColumnSchema $field
      * @param string       $dbType the column's DB type
      */
-    public function extractLimit(ColumnSchema &$field, $dbType)
+    public function extractLimit(ColumnSchema $field, $dbType)
     {
     }
 
@@ -741,7 +756,7 @@ MYSQL;
 
     public function parseFieldForSelect($field, $as_quoted_string = false)
     {
-        $name = ($as_quoted_string) ? $field->rawName : $field->name;
+        $name = ($as_quoted_string) ? $field->quotedName : $field->name;
         $alias = $field->getName(true);
         if ($as_quoted_string && !ctype_alnum($alias)) {
             $alias = '[' . $alias . ']';
@@ -815,7 +830,7 @@ MYSQL;
                 }
             }
 
-            return "$prefix EXEC {$routine->rawName} $paramStr; $postfix";
+            return "$prefix EXEC {$routine->quotedName} $paramStr; $postfix";
         } else {
             $paramStr = '';
             foreach ($param_schemas as $key => $paramSchema) {
@@ -831,7 +846,7 @@ MYSQL;
                 }
             }
 
-            return "EXEC {$routine->rawName} $paramStr";
+            return "EXEC {$routine->quotedName} $paramStr";
         }
     }
 
@@ -859,7 +874,7 @@ MYSQL;
     protected function getFunctionStatement(RoutineSchema $routine, array $param_schemas, array &$values)
     {
         // must always use schema in function name
-        $name = $routine->rawName;
+        $name = $routine->quotedName;
         if (0 !== strpos($name, '.')) {
             $name = static::DEFAULT_SCHEMA . '.' . $name;
         }
