@@ -1,6 +1,8 @@
 <?php
 namespace DreamFactory\Core\SqlSrv\Database\Schema;
 
+use DreamFactory\Core\Database\Enums\DbFunctionUses;
+use DreamFactory\Core\Database\Enums\FunctionTypes;
 use DreamFactory\Core\Database\Schema\ColumnSchema;
 use DreamFactory\Core\Database\Schema\RoutineSchema;
 use DreamFactory\Core\Database\Components\Schema;
@@ -361,7 +363,7 @@ MYSQL;
     {
         $enable = $check ? 'CHECK' : 'NOCHECK';
         if (!isset($this->normalTables[$schema])) {
-            $this->normalTables[$schema] = $this->findTableNames($schema, false);
+            $this->normalTables[$schema] = $this->findTableNames($schema);
         }
         $db = $this->connection;
         foreach ($this->normalTables[$schema] as $table) {
@@ -520,6 +522,48 @@ MYSQL;
         if (isset($column['default_definition'])) {
             $this->extractDefault($c, $column['default_definition']);
         }
+        // special type handlers
+        switch ($c->dbType) {
+            case 'image':
+                $c->dbFunction = [
+                    [
+                        'use'           => [DbFunctionUses::SELECT],
+                        'function'      => "(CONVERT(varbinary(max), {$c->quotedName}))",
+                        'function_type' => FunctionTypes::DATABASE
+                    ]
+                ];
+                break;
+            case 'timestamp': // deprecated, not a real timestamp, but internal rowversion
+            case 'rowversion':
+            $c->dbFunction = [
+                [
+                    'use'           => [DbFunctionUses::SELECT],
+                    'function'      => "CAST({$c->quotedName} AS BIGINT)",
+                    'function_type' => FunctionTypes::DATABASE
+                ]
+            ];
+                break;
+            case 'geometry':
+            case 'geography':
+            case 'hierarchyid':
+            $c->dbFunction = [
+                [
+                    'use'           => [DbFunctionUses::SELECT],
+                    'function'      => "({$c->quotedName}.ToString())",
+                    'function_type' => FunctionTypes::DATABASE
+                ]
+            ];
+                break;
+            case 'uniqueidentifier':
+                $c->dbFunction = [
+                    [
+                        'use'           => [DbFunctionUses::SELECT],
+                        'function'      => "(CONVERT(varchar(255), {$c->quotedName}))",
+                        'function_type' => FunctionTypes::DATABASE
+                    ]
+                ];
+                break;
+        }
 
         return $c;
     }
@@ -558,11 +602,11 @@ EOD;
         foreach ($rows as $row) {
             $row = array_change_key_case((array)$row, CASE_UPPER);
             $schemaName = isset($row['TABLE_SCHEMA']) ? $row['TABLE_SCHEMA'] : '';
-            $tableName = isset($row['TABLE_NAME']) ? $row['TABLE_NAME'] : '';
-            $internalName = $schemaName . '.' . $tableName;
-            $name = ($addSchema) ? $internalName : $tableName;
-            $quotedName = $this->quoteTableName($schemaName) . '.' . $this->quoteTableName($tableName);;
-            $settings = compact('schemaName', 'tableName', 'name', 'internalName','quotedName');
+            $resourceName = isset($row['TABLE_NAME']) ? $row['TABLE_NAME'] : '';
+            $internalName = $schemaName . '.' . $resourceName;
+            $name = ($addSchema) ? $internalName : $resourceName;
+            $quotedName = $this->quoteTableName($schemaName) . '.' . $this->quoteTableName($resourceName);;
+            $settings = compact('schemaName', 'resourceName', 'name', 'internalName', 'quotedName');
             $names[strtolower($name)] = new TableSchema($settings);
         }
 
@@ -591,11 +635,11 @@ EOD;
         foreach ($rows as $row) {
             $row = array_change_key_case((array)$row, CASE_UPPER);
             $schemaName = isset($row['TABLE_SCHEMA']) ? $row['TABLE_SCHEMA'] : '';
-            $tableName = isset($row['TABLE_NAME']) ? $row['TABLE_NAME'] : '';
-            $internalName = $schemaName . '.' . $tableName;
-            $name = ($addSchema) ? $internalName : $tableName;
-            $quotedName = $this->quoteTableName($schemaName) . '.' . $this->quoteTableName($tableName);
-            $settings = compact('schemaName', 'tableName', 'name', 'internalName','quotedName');
+            $resourceName = isset($row['TABLE_NAME']) ? $row['TABLE_NAME'] : '';
+            $internalName = $schemaName . '.' . $resourceName;
+            $name = ($addSchema) ? $internalName : $resourceName;
+            $quotedName = $this->quoteTableName($schemaName) . '.' . $this->quoteTableName($resourceName);
+            $settings = compact('schemaName', 'resourceName', 'name', 'internalName', 'quotedName');
             $settings['isView'] = true;
             $names[strtolower($name)] = new TableSchema($settings);
         }
@@ -657,29 +701,6 @@ MYSQL;
     public function getTimestampForSet()
     {
         return $this->connection->raw('(SYSDATETIMEOFFSET())');
-    }
-
-    public function parseValueForSet($value, $field_info)
-    {
-        switch ($field_info->type) {
-            case DbSimpleTypes::TYPE_BOOLEAN:
-                $value = (filter_var($value, FILTER_VALIDATE_BOOLEAN) ? 1 : 0);
-                break;
-        }
-        switch ($field_info->dbType) {
-            case 'rowversion':
-            case 'timestamp':
-                throw new ForbiddenException('Field type not able to be set.');
-            case 'uniqueidentifier':
-                if (36 === strlen($value)) {
-                    $value = $this->connection->raw("CONVERT(uniqueidentifier, '$value')");
-                } elseif (0 === strcasecmp('null', $value)) {
-                    $value = null;
-                }
-                break;
-        }
-
-        return $value;
     }
 
     /**
@@ -754,31 +775,27 @@ MYSQL;
         }
     }
 
-    public function parseFieldForSelect($field, $as_quoted_string = false)
+    public function parseValueForSet($value, $field_info)
     {
-        $name = ($as_quoted_string) ? $field->quotedName : $field->name;
-        $alias = $field->getName(true);
-        if ($as_quoted_string && !ctype_alnum($alias)) {
-            $alias = '[' . $alias . ']';
+        switch ($field_info->type) {
+            case DbSimpleTypes::TYPE_BOOLEAN:
+                $value = ($value ? 1 : 0);
+                break;
         }
-        switch ($field->dbType) {
-//            case 'datetime':
-//            case 'datetimeoffset':
-//                return $this->connection->raw("(CONVERT(nvarchar(30), $name, 127)) AS $alias");
-            case 'image':
-                return $this->connection->raw("(CONVERT(varbinary(max), $name)) AS $alias");
-            case 'timestamp': // deprecated, not a real timestamp, but internal rowversion
+        switch ($field_info->dbType) {
             case 'rowversion':
-                return $this->connection->raw("CAST($name AS BIGINT) AS $alias");
-            case 'geometry':
-            case 'geography':
-            case 'hierarchyid':
-                return $this->connection->raw("($name.ToString()) AS $alias");
+            case 'timestamp':
+                throw new ForbiddenException('Field type not able to be set.');
             case 'uniqueidentifier':
-                return $this->connection->raw("(CONVERT(varchar(255), $name)) AS $alias");
-            default :
-                return parent::parseFieldForSelect($field, $as_quoted_string);
+                if (36 === strlen($value)) {
+                    $value = $this->connection->raw("CONVERT(uniqueidentifier, '$value')");
+                } elseif (0 === strcasecmp('null', $value)) {
+                    $value = null;
+                }
+                break;
         }
+
+        return parent::parseValueForSet($value, $field_info);
     }
 
     /**
