@@ -373,17 +373,6 @@ MYSQL;
         }
     }
 
-    /**
-     * Gets the primary key column(s) details for the given table.
-     *
-     * @param TableSchema $table table
-     *
-     * @return void primary keys (null if no pk, string if only 1 column pk, or array if composite pk)
-     */
-    protected function findPrimaryKey($table)
-    {
-    }
-
     protected function findTableReferences()
     {
         $rc = 'INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS';
@@ -803,9 +792,9 @@ MYSQL;
      */
     protected function getProcedureStatement(RoutineSchema $routine, array $param_schemas, array &$values)
     {
-        // Note that using the dblib driver doesn't allow binding of output parameters,
-        // and also requires declaration prior to and selecting after to retrieve them.
-        if (in_array('dblib', \PDO::getAvailableDrivers())) {
+        if (!in_array('sqlsrv', \PDO::getAvailableDrivers())) {
+            // Note that using the dblib driver doesn't allow binding of output parameters,
+            // and also requires declaration prior to and selecting after to retrieve them.
             $paramStr = '';
             $prefix = '';
             $postfix = '';
@@ -869,8 +858,8 @@ MYSQL;
 
     protected function doRoutineBinding($statement, array $paramSchemas, array &$values)
     {
-        if (in_array('dblib', \PDO::getAvailableDrivers())) {
-            // do binding
+        if (!in_array('sqlsrv', \PDO::getAvailableDrivers())) {
+            // do dblib version of binding
             foreach ($paramSchemas as $key => $paramSchema) {
                 switch ($paramSchema->paramType) {
                     case 'IN':

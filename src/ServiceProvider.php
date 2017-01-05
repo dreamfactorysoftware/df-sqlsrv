@@ -6,9 +6,12 @@ use DreamFactory\Core\Components\DbSchemaExtensions;
 use DreamFactory\Core\Enums\ServiceTypeGroups;
 use DreamFactory\Core\Services\ServiceManager;
 use DreamFactory\Core\Services\ServiceType;
+use DreamFactory\Core\SqlSrv\Database\Connectors\SqlServerConnector;
 use DreamFactory\Core\SqlSrv\Database\Schema\SqlServerSchema;
 use DreamFactory\Core\SqlSrv\Models\SqlSrvDbConfig;
 use DreamFactory\Core\SqlSrv\Services\SqlSrv;
+use Illuminate\Database\DatabaseManager;
+use Illuminate\Database\SqlServerConnection;
 
 class ServiceProvider extends \Illuminate\Support\ServiceProvider
 {
@@ -16,6 +19,16 @@ class ServiceProvider extends \Illuminate\Support\ServiceProvider
 
     public function register()
     {
+        // Add our database drivers override.
+        $this->app->resolving('db', function (DatabaseManager $db) {
+            $db->extend('sqlsrv', function ($config) {
+                $connector = new SqlServerConnector();
+                $connection = $connector->connect($config);
+
+                return new SqlServerConnection($connection, $config["database"], $config["prefix"], $config);
+            });
+        });
+
         // Add our service types.
         $this->app->resolving('df.service', function (ServiceManager $df) {
             $df->addType(
