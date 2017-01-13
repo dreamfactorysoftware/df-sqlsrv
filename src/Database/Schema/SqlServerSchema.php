@@ -411,61 +411,43 @@ EOD;
      */
     protected function findColumns(TableSchema $table)
     {
-//        $isAzure = ( false !== strpos( $this->connection->connectionString, '.database.windows.net' ) );
-//        $sql = "SELECT t1.*, columnproperty(object_id(t1.table_schema+'.'+t1.table_name), t1.column_name, 'IsIdentity') AS IsIdentity";
-//        if ( !$isAzure )
-//        {
-//            $sql .= ", CONVERT(VARCHAR, t2.value) AS Comment";
-//        }
-//        $sql .= " FROM " . $this->quoteTableName( $columnsTable ) . " AS t1";
-//        if ( !$isAzure )
-//        {
-//            $sql .=
-//                " LEFT OUTER JOIN sys.extended_properties AS t2" .
-//                " ON t1.ORDINAL_POSITION = t2.minor_id AND object_name(t2.major_id) = t1.TABLE_NAME" .
-//                " AND t2.class=1 AND t2.class_desc='OBJECT_OR_COLUMN' AND t2.name='MS_Description'";
-//        }
-//        $sql .= " WHERE " . join( ' AND ', $where );
-
         $sql = <<<MYSQL
 SELECT col.name, col.precision, col.scale, col.max_length, col.collation_name, col.is_nullable, col.is_identity,
-       coltype.name as type, coldef.definition as default_definition, idx.name as constraint_name, idx.is_unique, idx.is_primary_key
+       coltype.name as type, coldef.definition as default_definition, 
+       '0' as is_primary_key, '0' as is_unique, '0' as is_index
 FROM sys.columns AS col
 LEFT OUTER JOIN sys.types AS coltype ON coltype.user_type_id = col.user_type_id
 LEFT OUTER JOIN sys.default_constraints AS coldef ON coldef.parent_column_id = col.column_id AND coldef.parent_object_id = col.object_id
-LEFT OUTER JOIN sys.index_columns AS idx_cols ON idx_cols.column_id = col.column_id AND idx_cols.object_id = col.object_id
-LEFT OUTER JOIN sys.indexes AS idx ON idx_cols.index_id = idx.index_id AND idx.object_id = col.object_id
 WHERE col.object_id = object_id('{$table->quotedName}')
 MYSQL;
 
         $columns = $this->connection->select($sql);
 
-//        $kcu = 'INFORMATION_SCHEMA.KEY_COLUMN_USAGE';
-//        $tc = 'INFORMATION_SCHEMA.TABLE_CONSTRAINTS';
-//        if (isset($table->catalogName)) {
-//            $kcu = $table->catalogName . '.' . $kcu;
-//            $tc = $table->catalogName . '.' . $tc;
-//        }
-//
-//        $sql = <<<EOD
-//		SELECT k.column_name field_name
-//			FROM {$this->quoteTableName($kcu)} k
-//		    LEFT JOIN {$this->quoteTableName($tc)} c
-//		      ON k.table_name = c.table_name
-//		     AND k.constraint_name = c.constraint_name
-//		   WHERE c.constraint_type ='PRIMARY KEY'
-//		   	    AND k.table_name = :table
-//				AND k.table_schema = :schema
-//EOD;
-//        if (!empty($result = $this->selectColumn($sql, $params))) {
-//            foreach ($result as $primary) {
-//                foreach ($columns as &$column) {
-//                    if ($primary === array_get($column, 'name')) {
-//                        $column['is_primary_key'] = true;
-//                    }
-//                }
-//            }
-//        }
+        // gather index information
+        $sql = <<<MYSQL
+SELECT col.name, idx.name as is_index, idx.is_unique, idx.is_primary_key
+FROM sys.index_columns AS idx_col
+LEFT OUTER JOIN sys.indexes AS idx ON idx_col.index_id = idx.index_id AND idx.object_id = idx_col.object_id
+LEFT OUTER JOIN sys.columns AS col ON idx_col.column_id = col.column_id AND idx_col.object_id = col.object_id
+WHERE idx_col.object_id = object_id('{$table->quotedName}')
+MYSQL;
+
+        $indexes = $this->connection->select($sql);
+        foreach ($indexes as $index) {
+            foreach ($columns as &$column) {
+                if ($index->name === $column->name) {
+                    if (boolval($index->is_primary_key)) {
+                        $column->is_primary_key = true;
+                    }
+                    if (boolval($index->is_unique)) {
+                        $column->is_unique = true;
+                    }
+                    if (boolval($index->is_index)) {
+                        $column->is_index = true;
+                    }
+                }
+            }
+        }
 
         return $columns;
     }
@@ -484,7 +466,7 @@ MYSQL;
         $c->allowNull = boolval($column['is_nullable']);
         $c->isPrimaryKey = boolval($column['is_primary_key']);
         $c->isUnique = boolval($column['is_unique']);
-        $c->isIndex = boolval($column['constraint_name']);
+        $c->isIndex = boolval($column['is_index']);
         $c->dbType = $column['type'];
         $c->precision = intval($column['precision']);
         $c->scale = intval($column['scale']);
