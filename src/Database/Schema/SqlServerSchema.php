@@ -475,7 +475,7 @@ MYSQL;
         $c->allowNull = boolval($column['is_nullable']);
         $c->isPrimaryKey = boolval($column['is_primary_key']);
         $c->isUnique = boolval($column['is_unique']);
-        $c->isIndex = boolval($column['constraint_name']);
+        $c->isIndex = boolval($column['is_index']);
         $c->dbType = $column['type'];
         $c->precision = intval($column['precision']);
         $c->scale = intval($column['scale']);
