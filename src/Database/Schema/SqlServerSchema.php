@@ -1,9 +1,11 @@
 <?php
 namespace DreamFactory\Core\SqlSrv\Database\Schema;
 
+use DreamFactory\Core\Database\Enums\DbFunctionUses;
+use DreamFactory\Core\Database\Enums\FunctionTypes;
 use DreamFactory\Core\Database\Schema\ColumnSchema;
 use DreamFactory\Core\Database\Schema\RoutineSchema;
-use DreamFactory\Core\Database\Schema\Schema;
+use DreamFactory\Core\Database\Components\Schema;
 use DreamFactory\Core\Database\Schema\TableSchema;
 use DreamFactory\Core\Enums\DbResourceTypes;
 use DreamFactory\Core\Enums\DbSimpleTypes;
@@ -340,11 +342,11 @@ class SqlServerSchema extends Schema
             $value = (int)($value) - 1;
         } else {
             $sql = <<<MYSQL
-SELECT MAX([{$table->primaryKey}]) FROM {$table->rawName}
+SELECT MAX([{$table->primaryKey}]) FROM {$table->quotedName}
 MYSQL;
             $value = (int)$this->selectValue($sql);
         }
-        $name = strtr($table->rawName, ['[' => '', ']' => '']);
+        $name = strtr($table->quotedName, ['[' => '', ']' => '']);
         $this->connection->statement("DBCC CHECKIDENT ('$name',RESEED,$value)");
     }
 
@@ -361,7 +363,7 @@ MYSQL;
     {
         $enable = $check ? 'CHECK' : 'NOCHECK';
         if (!isset($this->normalTables[$schema])) {
-            $this->normalTables[$schema] = $this->findTableNames($schema, false);
+            $this->normalTables[$schema] = $this->findTableNames($schema);
         }
         $db = $this->connection;
         foreach ($this->normalTables[$schema] as $table) {
@@ -369,17 +371,6 @@ MYSQL;
             /** @noinspection SqlNoDataSourceInspection */
             $db->statement("ALTER TABLE $tableName $enable CONSTRAINT ALL");
         }
-    }
-
-    /**
-     * Gets the primary key column(s) details for the given table.
-     *
-     * @param TableSchema $table table
-     *
-     * @return void primary keys (null if no pk, string if only 1 column pk, or array if composite pk)
-     */
-    protected function findPrimaryKey($table)
-    {
     }
 
     protected function findTableReferences()
@@ -427,7 +418,7 @@ SELECT col.name, col.precision, col.scale, col.max_length, col.collation_name, c
 FROM sys.columns AS col
 LEFT OUTER JOIN sys.types AS coltype ON coltype.user_type_id = col.user_type_id
 LEFT OUTER JOIN sys.default_constraints AS coldef ON coldef.parent_column_id = col.column_id AND coldef.parent_object_id = col.object_id
-WHERE col.object_id = object_id('{$table->rawName}')
+WHERE col.object_id = object_id('{$table->quotedName}')
 MYSQL;
 
         $columns = $this->connection->select($sql);
@@ -438,7 +429,7 @@ SELECT col.name, idx.name as is_index, idx.is_unique, idx.is_primary_key
 FROM sys.index_columns AS idx_col
 LEFT OUTER JOIN sys.indexes AS idx ON idx_col.index_id = idx.index_id AND idx.object_id = idx_col.object_id
 LEFT OUTER JOIN sys.columns AS col ON idx_col.column_id = col.column_id AND idx_col.object_id = col.object_id
-WHERE idx_col.object_id = object_id('{$table->rawName}')
+WHERE idx_col.object_id = object_id('{$table->quotedName}')
 MYSQL;
 
         $indexes = $this->connection->select($sql);
@@ -471,7 +462,7 @@ MYSQL;
     protected function createColumn($column)
     {
         $c = new ColumnSchema(['name' => $column['name']]);
-        $c->rawName = $this->quoteColumnName($c->name);
+        $c->quotedName = $this->quoteColumnName($c->name);
         $c->allowNull = boolval($column['is_nullable']);
         $c->isPrimaryKey = boolval($column['is_primary_key']);
         $c->isUnique = boolval($column['is_unique']);
@@ -502,6 +493,48 @@ MYSQL;
         if (isset($column['default_definition'])) {
             $this->extractDefault($c, $column['default_definition']);
         }
+        // special type handlers
+        switch ($c->dbType) {
+            case 'image':
+                $c->dbFunction = [
+                    [
+                        'use'           => [DbFunctionUses::SELECT],
+                        'function'      => "(CONVERT(varbinary(max), {$c->quotedName}))",
+                        'function_type' => FunctionTypes::DATABASE
+                    ]
+                ];
+                break;
+            case 'timestamp': // deprecated, not a real timestamp, but internal rowversion
+            case 'rowversion':
+            $c->dbFunction = [
+                [
+                    'use'           => [DbFunctionUses::SELECT],
+                    'function'      => "CAST({$c->quotedName} AS BIGINT)",
+                    'function_type' => FunctionTypes::DATABASE
+                ]
+            ];
+                break;
+            case 'geometry':
+            case 'geography':
+            case 'hierarchyid':
+            $c->dbFunction = [
+                [
+                    'use'           => [DbFunctionUses::SELECT],
+                    'function'      => "({$c->quotedName}.ToString())",
+                    'function_type' => FunctionTypes::DATABASE
+                ]
+            ];
+                break;
+            case 'uniqueidentifier':
+                $c->dbFunction = [
+                    [
+                        'use'           => [DbFunctionUses::SELECT],
+                        'function'      => "(CONVERT(varchar(255), {$c->quotedName}))",
+                        'function_type' => FunctionTypes::DATABASE
+                    ]
+                ];
+                break;
+        }
 
         return $c;
     }
@@ -519,24 +552,12 @@ MYSQL;
     }
 
     /**
-     * Returns all table names in the database.
-     *
-     * @param string $schema the schema of the tables. Defaults to empty string, meaning the current or default schema.
-     *                       If not empty, the returned table names will be prefixed with the schema name.
-     * @param bool   $include_views
-     *
-     * @return array all table names in the database.
+     * @inheritdoc
      */
-    protected function findTableNames($schema = '', $include_views = true)
+    protected function findTableNames($schema = '')
     {
-        if ($include_views) {
-            $condition = "TABLE_TYPE in ('BASE TABLE','VIEW')";
-        } else {
-            $condition = "TABLE_TYPE='BASE TABLE'";
-        }
-
         $sql = <<<EOD
-SELECT TABLE_NAME, TABLE_SCHEMA, TABLE_TYPE FROM [INFORMATION_SCHEMA].[TABLES] WHERE $condition
+SELECT TABLE_NAME, TABLE_SCHEMA FROM [INFORMATION_SCHEMA].[TABLES] WHERE TABLE_TYPE = 'BASE TABLE'
 EOD;
 
         if (!empty($schema)) {
@@ -545,24 +566,52 @@ EOD;
 
         $rows = $this->connection->select($sql);
 
-        $defaultSchema = $this->getDefaultSchema();
+        $defaultSchema = $this->getNamingSchema();
         $addSchema = (!empty($schema) && ($defaultSchema !== $schema));
 
         $names = [];
         foreach ($rows as $row) {
             $row = array_change_key_case((array)$row, CASE_UPPER);
             $schemaName = isset($row['TABLE_SCHEMA']) ? $row['TABLE_SCHEMA'] : '';
-            $tableName = isset($row['TABLE_NAME']) ? $row['TABLE_NAME'] : '';
-            if ($addSchema) {
-                $name = $schemaName . '.' . $tableName;
-                $rawName = $this->quoteTableName($schemaName) . '.' . $this->quoteTableName($tableName);;
-            } else {
-                $name = $tableName;
-                $rawName = $this->quoteTableName($tableName);
-            }
-            $settings = compact('schemaName', 'tableName', 'name', 'rawName');
-            $settings['isView'] = (0 === strcasecmp('VIEW', $row['TABLE_TYPE']));
+            $resourceName = isset($row['TABLE_NAME']) ? $row['TABLE_NAME'] : '';
+            $internalName = $schemaName . '.' . $resourceName;
+            $name = ($addSchema) ? $internalName : $resourceName;
+            $quotedName = $this->quoteTableName($schemaName) . '.' . $this->quoteTableName($resourceName);;
+            $settings = compact('schemaName', 'resourceName', 'name', 'internalName', 'quotedName');
+            $names[strtolower($name)] = new TableSchema($settings);
+        }
 
+        return $names;
+    }
+
+    /**
+     * @inheritdoc
+     */
+    protected function findViewNames($schema = '')
+    {
+        $sql = <<<EOD
+SELECT TABLE_NAME, TABLE_SCHEMA FROM [INFORMATION_SCHEMA].[TABLES] WHERE TABLE_TYPE = 'VIEW'
+EOD;
+
+        if (!empty($schema)) {
+            $sql .= " AND TABLE_SCHEMA = '$schema'";
+        }
+
+        $rows = $this->connection->select($sql);
+
+        $defaultSchema = $this->getNamingSchema();
+        $addSchema = (!empty($schema) && ($defaultSchema !== $schema));
+
+        $names = [];
+        foreach ($rows as $row) {
+            $row = array_change_key_case((array)$row, CASE_UPPER);
+            $schemaName = isset($row['TABLE_SCHEMA']) ? $row['TABLE_SCHEMA'] : '';
+            $resourceName = isset($row['TABLE_NAME']) ? $row['TABLE_NAME'] : '';
+            $internalName = $schemaName . '.' . $resourceName;
+            $name = ($addSchema) ? $internalName : $resourceName;
+            $quotedName = $this->quoteTableName($schemaName) . '.' . $this->quoteTableName($resourceName);
+            $settings = compact('schemaName', 'resourceName', 'name', 'internalName', 'quotedName');
+            $settings['isView'] = true;
             $names[strtolower($name)] = new TableSchema($settings);
         }
 
@@ -597,56 +646,34 @@ EOD;
     }
 
     /**
-     * Builds a SQL statement for changing the definition of a column.
-     *
-     * @param string $table      the table whose column is to be changed. The table name will be properly quoted by the
-     *                           method.
-     * @param string $column     the name of the column to be changed. The name will be properly quoted by the method.
-     * @param string $definition the new column type. The {@link getColumnType} method will be invoked to convert
-     *                           abstract column type (if any) into the physical one. Anything that is not recognized
-     *                           as abstract type will be kept in the generated SQL. For example, 'string' will be
-     *                           turned into 'varchar(255)', while 'string not null' will become 'varchar(255) not
-     *                           null'.
-     *
-     * @return string the SQL statement for changing the definition of a column.
-     * @since 1.1.6
+     * @inheritdoc
      */
     public function alterColumn($table, $column, $definition)
     {
         $sql = <<<MYSQL
-ALTER TABLE {$this->quoteTableName($table)}
-ALTER COLUMN {$this->quoteColumnName($column)} {$this->getColumnType($definition)}
+ALTER TABLE $table ALTER COLUMN {$this->quoteColumnName($column)} {$this->getColumnType($definition)}
 MYSQL;
 
         return $sql;
     }
 
+    /**
+     * @inheritdoc
+     */
+    public function dropColumns($table, $columns)
+    {
+        $columns = (array)$columns;
+
+        if (!empty($columns)) {
+            return $this->connection->statement("ALTER TABLE $table DROP COLUMN" . implode(',', $columns));
+        }
+
+        return false;
+    }
+
     public function getTimestampForSet()
     {
         return $this->connection->raw('(SYSDATETIMEOFFSET())');
-    }
-
-    public function parseValueForSet($value, $field_info)
-    {
-        switch ($field_info->type) {
-            case DbSimpleTypes::TYPE_BOOLEAN:
-                $value = (filter_var($value, FILTER_VALIDATE_BOOLEAN) ? 1 : 0);
-                break;
-        }
-        switch ($field_info->dbType) {
-            case 'rowversion':
-            case 'timestamp':
-                throw new ForbiddenException('Field type not able to be set.');
-            case 'uniqueidentifier':
-                if (36 === strlen($value)) {
-                    $value = $this->connection->raw("CONVERT(uniqueidentifier, '$value')");
-                } elseif (0 === strcasecmp('null', $value)) {
-                    $value = null;
-                }
-                break;
-        }
-
-        return $value;
     }
 
     /**
@@ -655,7 +682,7 @@ MYSQL;
      * @param ColumnSchema $column
      * @param string       $dbType DB type
      */
-    public function extractType(ColumnSchema &$column, $dbType)
+    public function extractType(ColumnSchema $column, $dbType)
     {
         parent::extractType($column, $dbType);
 
@@ -674,7 +701,7 @@ MYSQL;
      * @param ColumnSchema $field
      * @param mixed        $defaultValue the default value obtained from metadata
      */
-    public function extractDefault(ColumnSchema &$field, $defaultValue)
+    public function extractDefault(ColumnSchema $field, $defaultValue)
     {
         if ($defaultValue == '(NULL)') {
             $field->defaultValue = null;
@@ -700,7 +727,7 @@ MYSQL;
      * @param ColumnSchema $field
      * @param string       $dbType the column's DB type
      */
-    public function extractLimit(ColumnSchema &$field, $dbType)
+    public function extractLimit(ColumnSchema $field, $dbType)
     {
     }
 
@@ -721,31 +748,27 @@ MYSQL;
         }
     }
 
-    public function parseFieldForSelect($field, $as_quoted_string = false)
+    public function parseValueForSet($value, $field_info)
     {
-        $name = ($as_quoted_string) ? $field->rawName : $field->name;
-        $alias = $field->getName(true);
-        if ($as_quoted_string && !ctype_alnum($alias)) {
-            $alias = '[' . $alias . ']';
+        switch ($field_info->type) {
+            case DbSimpleTypes::TYPE_BOOLEAN:
+                $value = ($value ? 1 : 0);
+                break;
         }
-        switch ($field->dbType) {
-//            case 'datetime':
-//            case 'datetimeoffset':
-//                return $this->connection->raw("(CONVERT(nvarchar(30), $name, 127)) AS $alias");
-            case 'image':
-                return $this->connection->raw("(CONVERT(varbinary(max), $name)) AS $alias");
-            case 'timestamp': // deprecated, not a real timestamp, but internal rowversion
+        switch ($field_info->dbType) {
             case 'rowversion':
-                return $this->connection->raw("CAST($name AS BIGINT) AS $alias");
-            case 'geometry':
-            case 'geography':
-            case 'hierarchyid':
-                return $this->connection->raw("($name.ToString()) AS $alias");
+            case 'timestamp':
+                throw new ForbiddenException('Field type not able to be set.');
             case 'uniqueidentifier':
-                return $this->connection->raw("(CONVERT(varchar(255), $name)) AS $alias");
-            default :
-                return parent::parseFieldForSelect($field, $as_quoted_string);
+                if (36 === strlen($value)) {
+                    $value = $this->connection->raw("CONVERT(uniqueidentifier, '$value')");
+                } elseif (0 === strcasecmp('null', $value)) {
+                    $value = null;
+                }
+                break;
         }
+
+        return parent::parseValueForSet($value, $field_info);
     }
 
     /**
@@ -753,9 +776,9 @@ MYSQL;
      */
     protected function getProcedureStatement(RoutineSchema $routine, array $param_schemas, array &$values)
     {
-        // Note that using the dblib driver doesn't allow binding of output parameters,
-        // and also requires declaration prior to and selecting after to retrieve them.
-        if (in_array('dblib', \PDO::getAvailableDrivers())) {
+        if (!in_array('sqlsrv', \PDO::getAvailableDrivers())) {
+            // Note that using the dblib driver doesn't allow binding of output parameters,
+            // and also requires declaration prior to and selecting after to retrieve them.
             $paramStr = '';
             $prefix = '';
             $postfix = '';
@@ -797,7 +820,7 @@ MYSQL;
                 }
             }
 
-            return "$prefix EXEC {$routine->rawName} $paramStr; $postfix";
+            return "$prefix EXEC {$routine->quotedName} $paramStr; $postfix";
         } else {
             $paramStr = '';
             foreach ($param_schemas as $key => $paramSchema) {
@@ -813,14 +836,14 @@ MYSQL;
                 }
             }
 
-            return "EXEC {$routine->rawName} $paramStr";
+            return "EXEC {$routine->quotedName} $paramStr";
         }
     }
 
     protected function doRoutineBinding($statement, array $paramSchemas, array &$values)
     {
-        if (in_array('dblib', \PDO::getAvailableDrivers())) {
-            // do binding
+        if (!in_array('sqlsrv', \PDO::getAvailableDrivers())) {
+            // do dblib version of binding
             foreach ($paramSchemas as $key => $paramSchema) {
                 switch ($paramSchema->paramType) {
                     case 'IN':
@@ -841,7 +864,7 @@ MYSQL;
     protected function getFunctionStatement(RoutineSchema $routine, array $param_schemas, array &$values)
     {
         // must always use schema in function name
-        $name = $routine->rawName;
+        $name = $routine->quotedName;
         if (0 !== strpos($name, '.')) {
             $name = static::DEFAULT_SCHEMA . '.' . $name;
         }
