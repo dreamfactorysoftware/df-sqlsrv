@@ -690,7 +690,7 @@ MYSQL;
             $column->type = DbSimpleTypes::TYPE_TEXT;
         }
         if ((0 === strcasecmp($dbType, 'timestamp')) || (0 === strcasecmp($dbType, 'rowversion'))) {
-            $column->type = DbSimpleTypes::TYPE_BIGINT;
+            $column->type = DbSimpleTypes::TYPE_BIG_INT;
         }
     }
 
