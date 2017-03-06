@@ -690,7 +690,7 @@ MYSQL;
             $column->type = DbSimpleTypes::TYPE_TEXT;
         }
         if ((0 === strcasecmp($dbType, 'timestamp')) || (0 === strcasecmp($dbType, 'rowversion'))) {
-            $column->type = DbSimpleTypes::TYPE_BIGINT;
+            $column->type = DbSimpleTypes::TYPE_BIG_INT;
         }
     }
 
@@ -861,6 +861,9 @@ MYSQL;
         }
     }
 
+    /**
+     * @inheritdoc
+     */
     protected function getFunctionStatement(RoutineSchema $routine, array $param_schemas, array &$values)
     {
         // must always use schema in function name
@@ -871,6 +874,11 @@ MYSQL;
 
         $paramStr = $this->getRoutineParamString($param_schemas, $values);
 
-        return "SELECT $name($paramStr) AS " . $this->quoteColumnName('output');
+        switch ($routine->returnType) {
+            case DbSimpleTypes::TYPE_TABLE:
+                return "SELECT * FROM $name($paramStr) AS " . $this->quoteColumnName('output');
+            default:
+                return "SELECT $name($paramStr) AS " . $this->quoteColumnName('output');
+        }
     }
 }
