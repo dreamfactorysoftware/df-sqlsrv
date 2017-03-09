@@ -760,9 +760,7 @@ MYSQL;
             case 'timestamp':
                 throw new ForbiddenException('Field type not able to be set.');
             case 'uniqueidentifier':
-                if (36 === strlen($value)) {
-                    $value = $this->connection->raw("CONVERT(uniqueidentifier, '$value')");
-                } elseif (0 === strcasecmp('null', $value)) {
+                if (0 === strcasecmp('null', $value)) {
                     $value = null;
                 }
                 break;
