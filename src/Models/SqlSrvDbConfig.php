@@ -19,40 +19,44 @@ class SqlSrvDbConfig extends SqlDbConfig
         return 1433;
     }
 
-    public static function getSchema()
+    protected function getConnectionFields()
     {
-        $schema = parent::getSchema();
-        $extras = [
-            'charset' => [
+        $fields = parent::getConnectionFields();
+
+        return array_merge($fields, ['charset', 'readonly', 'pooling', 'appname']);
+    }
+
+    public static function getDefaultConnectionInfo()
+    {
+        $defaults = parent::getDefaultConnectionInfo();
+        if (substr(PHP_OS, 0, 3) == 'WIN') {
+            $defaults[] = [
                 'name'        => 'charset',
                 'label'       => 'Character Set',
                 'type'        => 'string',
                 'description' => 'The character set to use for this connection, i.e. ' . static::getDefaultCharset()
-            ],
-            'readonly' => [
+            ];
+        } else {
+            $defaults[] = [
                 'name'        => 'readonly',
                 'label'       => 'Read Only',
                 'type'        => 'boolean',
                 'description' => 'Defines ApplicationIntent as ReadOnly.'
-            ],
-            'pooling' => [
+            ];
+            $defaults[] = [
                 'name'        => 'pooling',
                 'label'       => 'Enable Connection Pooling',
                 'type'        => 'boolean',
                 'description' => 'Specifies whether the connection is assigned from a connection pool.'
-            ],
-            'appname' => [
-                'name'        => 'appname',
-                'label'       => 'Application Name',
-                'type'        => 'string',
-                'description' => 'The application name used in tracing.'
-            ]
+            ];
+        }
+        $defaults[] = [
+            'name'        => 'appname',
+            'label'       => 'Application Name',
+            'type'        => 'string',
+            'description' => 'The application name used in tracing.'
         ];
 
-        $pos = array_search('options', array_keys($schema));
-        $front = array_slice($schema, 0, $pos, true);
-        $end = array_slice($schema, $pos, null, true);
-
-        return array_merge($front, $extras, $end);
+        return $defaults;
     }
 }
