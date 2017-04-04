@@ -731,42 +731,20 @@ MYSQL;
     {
     }
 
-    /**
-     * Converts the input value to the type that this column is of.
-     *
-     * @param ColumnSchema $field
-     * @param mixed        $value input value
-     *
-     * @return mixed converted value
-     */
-    public function typecast(ColumnSchema $field, $value)
+    public function typecastToNative($value, $field_info, $allow_null = true)
     {
-        if ($field->phpType === 'boolean') {
-            return $value ? 1 : 0;
-        } else {
-            return parent::typecast($field, $value);
-        }
-    }
-
-    public function parseValueForSet($value, $field_info)
-    {
-        switch ($field_info->type) {
-            case DbSimpleTypes::TYPE_BOOLEAN:
-                $value = ($value ? 1 : 0);
-                break;
-        }
         switch ($field_info->dbType) {
             case 'rowversion':
             case 'timestamp':
                 throw new ForbiddenException('Field type not able to be set.');
             case 'uniqueidentifier':
                 if (0 === strcasecmp('null', $value)) {
-                    $value = null;
+                    return null;
                 }
                 break;
         }
 
-        return parent::parseValueForSet($value, $field_info);
+        return parent::typecastToNative($value, $field_info, $allow_null);
     }
 
     /**
