@@ -619,12 +619,7 @@ EOD;
     }
 
     /**
-     * Builds a SQL statement for renaming a DB table.
-     *
-     * @param string $table   the table to be renamed. The name will be properly quoted by the method.
-     * @param string $newName the new table name. The name will be properly quoted by the method.
-     *
-     * @return string the SQL statement for renaming a DB table.
+     * @inheritdoc
      */
     public function renameTable($table, $newName)
     {
@@ -632,17 +627,21 @@ EOD;
     }
 
     /**
-     * Builds a SQL statement for renaming a column.
-     *
-     * @param string $table   the table whose column is to be renamed. The name will be properly quoted by the method.
-     * @param string $name    the old name of the column. The name will be properly quoted by the method.
-     * @param string $newName the new name of the column. The name will be properly quoted by the method.
-     *
-     * @return string the SQL statement for renaming a DB column.
+     * @inheritdoc
      */
     public function renameColumn($table, $name, $newName)
     {
         return "sp_rename '$table.$name', '$newName', 'COLUMN'";
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function addColumn($table, $column, $type)
+    {
+        return <<<MYSQL
+ALTER TABLE $table ADD {$this->quoteColumnName($column)} {$this->getColumnType($type)};
+MYSQL;
     }
 
     /**
