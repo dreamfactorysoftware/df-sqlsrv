@@ -160,17 +160,8 @@ class SqlServerSchema extends Schema
             case 'smallint':
             case 'int':
             case 'bigint':
-                if (!isset($info['type_extras'])) {
-                    $length =
-                        (isset($info['length']))
-                            ? $info['length']
-                            : ((isset($info['precision'])) ? $info['precision']
-                            : null);
-                    if (!empty($length)) {
-                        $info['type_extras'] = "($length)"; // sets the viewable length
-                    }
-                }
-
+            case 'money':
+            case 'smallmoney':
                 $default = (isset($info['default'])) ? $info['default'] : null;
                 if (isset($default) && is_numeric($default)) {
                     $info['default'] = intval($default);
@@ -179,8 +170,6 @@ class SqlServerSchema extends Schema
 
             case 'decimal':
             case 'numeric':
-            case 'money':
-            case 'smallmoney':
                 if (!isset($info['type_extras'])) {
                     $length =
                         (isset($info['length']))
