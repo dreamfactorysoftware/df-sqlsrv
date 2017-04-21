@@ -160,17 +160,8 @@ class SqlServerSchema extends Schema
             case 'smallint':
             case 'int':
             case 'bigint':
-                if (!isset($info['type_extras'])) {
-                    $length =
-                        (isset($info['length']))
-                            ? $info['length']
-                            : ((isset($info['precision'])) ? $info['precision']
-                            : null);
-                    if (!empty($length)) {
-                        $info['type_extras'] = "($length)"; // sets the viewable length
-                    }
-                }
-
+            case 'money':
+            case 'smallmoney':
                 $default = (isset($info['default'])) ? $info['default'] : null;
                 if (isset($default) && is_numeric($default)) {
                     $info['default'] = intval($default);
@@ -179,8 +170,6 @@ class SqlServerSchema extends Schema
 
             case 'decimal':
             case 'numeric':
-            case 'money':
-            case 'smallmoney':
                 if (!isset($info['type_extras'])) {
                     $length =
                         (isset($info['length']))
@@ -619,12 +608,7 @@ EOD;
     }
 
     /**
-     * Builds a SQL statement for renaming a DB table.
-     *
-     * @param string $table   the table to be renamed. The name will be properly quoted by the method.
-     * @param string $newName the new table name. The name will be properly quoted by the method.
-     *
-     * @return string the SQL statement for renaming a DB table.
+     * @inheritdoc
      */
     public function renameTable($table, $newName)
     {
@@ -632,17 +616,21 @@ EOD;
     }
 
     /**
-     * Builds a SQL statement for renaming a column.
-     *
-     * @param string $table   the table whose column is to be renamed. The name will be properly quoted by the method.
-     * @param string $name    the old name of the column. The name will be properly quoted by the method.
-     * @param string $newName the new name of the column. The name will be properly quoted by the method.
-     *
-     * @return string the SQL statement for renaming a DB column.
+     * @inheritdoc
      */
     public function renameColumn($table, $name, $newName)
     {
         return "sp_rename '$table.$name', '$newName', 'COLUMN'";
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function addColumn($table, $column, $type)
+    {
+        return <<<MYSQL
+ALTER TABLE $table ADD {$this->quoteColumnName($column)} {$this->getColumnType($type)};
+MYSQL;
     }
 
     /**
@@ -731,44 +719,20 @@ MYSQL;
     {
     }
 
-    /**
-     * Converts the input value to the type that this column is of.
-     *
-     * @param ColumnSchema $field
-     * @param mixed        $value input value
-     *
-     * @return mixed converted value
-     */
-    public function typecast(ColumnSchema $field, $value)
+    public function typecastToNative($value, $field_info, $allow_null = true)
     {
-        if ($field->phpType === 'boolean') {
-            return $value ? 1 : 0;
-        } else {
-            return parent::typecast($field, $value);
-        }
-    }
-
-    public function parseValueForSet($value, $field_info)
-    {
-        switch ($field_info->type) {
-            case DbSimpleTypes::TYPE_BOOLEAN:
-                $value = ($value ? 1 : 0);
-                break;
-        }
         switch ($field_info->dbType) {
             case 'rowversion':
             case 'timestamp':
                 throw new ForbiddenException('Field type not able to be set.');
             case 'uniqueidentifier':
-                if (36 === strlen($value)) {
-                    $value = $this->connection->raw("CONVERT(uniqueidentifier, '$value')");
-                } elseif (0 === strcasecmp('null', $value)) {
-                    $value = null;
+                if (0 === strcasecmp('null', $value)) {
+                    return null;
                 }
                 break;
         }
 
-        return parent::parseValueForSet($value, $field_info);
+        return parent::typecastToNative($value, $field_info, $allow_null);
     }
 
     /**
