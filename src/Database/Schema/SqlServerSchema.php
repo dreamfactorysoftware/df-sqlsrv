@@ -30,6 +30,11 @@ class SqlServerSchema extends Schema
 
     const RIGHT_QUOTE_CHARACTER = ']';
 
+    public static function useSqlsrv()
+    {
+        return (in_array('sqlsrv', \PDO::getAvailableDrivers()));
+    }
+
     /**
      * @param boolean $refresh if we need to refresh schema cache.
      *
@@ -740,7 +745,7 @@ MYSQL;
      */
     protected function getProcedureStatement(RoutineSchema $routine, array $param_schemas, array &$values)
     {
-        if (!in_array('sqlsrv', \PDO::getAvailableDrivers())) {
+        if (!self::useSqlsrv()) {
             // Note that using the dblib driver doesn't allow binding of output parameters,
             // and also requires declaration prior to and selecting after to retrieve them.
             $paramStr = '';
@@ -806,7 +811,7 @@ MYSQL;
 
     protected function doRoutineBinding($statement, array $paramSchemas, array &$values)
     {
-        if (!in_array('sqlsrv', \PDO::getAvailableDrivers())) {
+        if (!self::useSqlsrv()) {
             // do dblib version of binding
             foreach ($paramSchemas as $key => $paramSchema) {
                 switch ($paramSchema->paramType) {

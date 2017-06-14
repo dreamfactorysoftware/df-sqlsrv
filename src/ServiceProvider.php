@@ -8,10 +8,10 @@ use DreamFactory\Core\Services\ServiceManager;
 use DreamFactory\Core\Services\ServiceType;
 use DreamFactory\Core\SqlSrv\Database\Connectors\SqlServerConnector;
 use DreamFactory\Core\SqlSrv\Database\Schema\SqlServerSchema;
+use DreamFactory\Core\SqlSrv\Database\SqlServerConnection;
 use DreamFactory\Core\SqlSrv\Models\SqlSrvDbConfig;
 use DreamFactory\Core\SqlSrv\Services\SqlSrv;
 use Illuminate\Database\DatabaseManager;
-use Illuminate\Database\SqlServerConnection;
 
 class ServiceProvider extends \Illuminate\Support\ServiceProvider
 {
