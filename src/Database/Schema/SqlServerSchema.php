@@ -5,22 +5,16 @@ use DreamFactory\Core\Database\Enums\DbFunctionUses;
 use DreamFactory\Core\Database\Enums\FunctionTypes;
 use DreamFactory\Core\Database\Schema\ColumnSchema;
 use DreamFactory\Core\Database\Schema\RoutineSchema;
-use DreamFactory\Core\Database\Components\Schema;
 use DreamFactory\Core\Database\Schema\TableSchema;
-use DreamFactory\Core\Enums\DbResourceTypes;
 use DreamFactory\Core\Enums\DbSimpleTypes;
 use DreamFactory\Core\Exceptions\ForbiddenException;
+use DreamFactory\Core\SqlDb\Database\Schema\SqlSchema;
 
 /**
  * Schema is the class for retrieving metadata information from a MS SQL Server database.
  */
-class SqlServerSchema extends Schema
+class SqlServerSchema extends SqlSchema
 {
-    /**
-     * Underlying database provides field-level schema, i.e. SQL (true) vs NoSQL (false)
-     */
-    const PROVIDES_FIELD_SCHEMA = true;
-
     const DEFAULT_SCHEMA = 'dbo';
 
     /**
@@ -48,16 +42,6 @@ class SqlServerSchema extends Schema
     /**
      * @inheritdoc
      */
-    public function getSupportedResourceTypes()
-    {
-        return [
-            DbResourceTypes::TYPE_TABLE,
-            DbResourceTypes::TYPE_VIEW,
-            DbResourceTypes::TYPE_PROCEDURE,
-            DbResourceTypes::TYPE_FUNCTION
-        ];
-    }
-
     protected function translateSimpleColumnTypes(array &$info)
     {
         // override this in each schema class
