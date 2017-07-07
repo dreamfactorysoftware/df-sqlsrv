@@ -654,6 +654,35 @@ MYSQL;
     }
 
     /**
+     * @param $type
+     *
+     * @return mixed|null
+     */
+    public static function getNativeDateTimeFormat($type)
+    {
+        switch (strtolower(strval($type))) {
+            case DbSimpleTypes::TYPE_DATE:
+                return 'Y-m-d';
+
+            case DbSimpleTypes::TYPE_DATETIME:
+            case DbSimpleTypes::TYPE_DATETIME_TZ:
+                return 'Y-m-d H:i:s.u';
+
+            case DbSimpleTypes::TYPE_TIME:
+            case DbSimpleTypes::TYPE_TIME_TZ:
+                return 'H:i:s.u';
+
+            case DbSimpleTypes::TYPE_TIMESTAMP:
+            case DbSimpleTypes::TYPE_TIMESTAMP_TZ:
+            case DbSimpleTypes::TYPE_TIMESTAMP_ON_CREATE:
+            case DbSimpleTypes::TYPE_TIMESTAMP_ON_UPDATE:
+                return 'Y-m-d H:i:s.u P';
+        }
+
+        return null;
+    }
+
+    /**
      * Extracts the PHP type from DB type.
      *
      * @param ColumnSchema $column
