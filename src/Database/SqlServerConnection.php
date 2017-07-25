@@ -29,7 +29,7 @@ class SqlServerConnection extends LaravelSqlServerConnection
                 }
             }
             if (null !== $confLocation = config('df.db.freetds.sqlsrv')) {
-                if (!putenv("FREETDSCONF=")) {
+                if (!putenv("FREETDSCONF=$confLocation")) {
                     \Log::alert('Could not write environment variable for FREETDSCONF location.');
                 }
             }
