@@ -14,7 +14,7 @@ class SqlSrv extends SqlDb
     public static function adaptConfig(array &$config)
     {
         $config['driver'] = 'sqlsrv';
-        if (!in_array('sqlsrv', \PDO::getAvailableDrivers())) {
+        if (in_array('dblib', \PDO::getAvailableDrivers())) {
             // assume dblib driver and FreeTDS are available
             if (null !== $dumpLocation = config('df.db.freetds.dump')) {
                 if (!putenv("TDSDUMP=$dumpLocation")) {
@@ -32,7 +32,6 @@ class SqlSrv extends SqlDb
                 }
             }
         }
-
         parent::adaptConfig($config);
     }
 
