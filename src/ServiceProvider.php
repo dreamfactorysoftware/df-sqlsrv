@@ -1,7 +1,6 @@
 <?php
 namespace DreamFactory\Core\SqlSrv;
 
-use DreamFactory\Core\Components\ServiceDocBuilder;
 use DreamFactory\Core\Components\DbSchemaExtensions;
 use DreamFactory\Core\Enums\ServiceTypeGroups;
 use DreamFactory\Core\Services\ServiceManager;
@@ -15,8 +14,6 @@ use Illuminate\Database\DatabaseManager;
 
 class ServiceProvider extends \Illuminate\Support\ServiceProvider
 {
-    use ServiceDocBuilder;
-
     public function register()
     {
         // Add our database drivers override.
@@ -38,9 +35,6 @@ class ServiceProvider extends \Illuminate\Support\ServiceProvider
                     'description'     => 'Database service supporting SQL Server connections.',
                     'group'           => ServiceTypeGroups::DATABASE,
                     'config_handler'  => SqlSrvDbConfig::class,
-                    'default_api_doc' => function ($service) {
-                        return $this->buildServiceDoc($service->id, SqlSrv::getApiDocInfo($service));
-                    },
                     'factory'         => function ($config) {
                         return new SqlSrv($config);
                     },
