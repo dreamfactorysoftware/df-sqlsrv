@@ -266,17 +266,10 @@ class SqlServerSchema extends SqlSchema
             $definition .= ' IDENTITY';
         }
 
-        $isUniqueKey = (isset($info['is_unique'])) ? filter_var($info['is_unique'], FILTER_VALIDATE_BOOLEAN) : false;
-        $isPrimaryKey =
-            (isset($info['is_primary_key'])) ? filter_var($info['is_primary_key'], FILTER_VALIDATE_BOOLEAN) : false;
-        if ($isPrimaryKey && $isUniqueKey) {
-            throw new \Exception('Unique and Primary designations not allowed simultaneously.');
-        }
-
-        if ($isUniqueKey) {
-            $definition .= ' UNIQUE';
-        } elseif ($isPrimaryKey) {
+        if (isset($info['is_primary_key']) && filter_var($info['is_primary_key'], FILTER_VALIDATE_BOOLEAN)) {
             $definition .= ' PRIMARY KEY';
+        } elseif (isset($info['is_unique']) && filter_var($info['is_unique'], FILTER_VALIDATE_BOOLEAN)) {
+            $definition .= ' UNIQUE';
         }
 
         return $definition;
@@ -355,6 +348,7 @@ MYSQL;
     {
         $rc = 'INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS';
         $kcu = 'INFORMATION_SCHEMA.KEY_COLUMN_USAGE';
+        $tc = 'INFORMATION_SCHEMA.TABLE_CONSTRAINTS';
         if (isset($this->catalogName)) {
             $kcu = $this->catalogName . '.' . $kcu;
             $rc = $this->catalogName . '.' . $rc;
@@ -366,6 +360,8 @@ MYSQL;
 		     KCU1.TABLE_SCHEMA AS 'table_schema'
 		   , KCU1.TABLE_NAME AS 'table_name'
 		   , KCU1.COLUMN_NAME AS 'column_name'
+		   , KCU3.COLUMN_NAME AS 'constraint_column_name'
+		   , TC.CONSTRAINT_TYPE AS 'constraint_type'
 		   , KCU2.TABLE_SCHEMA AS 'referenced_table_schema'
 		   , KCU2.TABLE_NAME AS 'referenced_table_name'
 		   , KCU2.COLUMN_NAME AS 'referenced_column_name'
@@ -379,9 +375,25 @@ MYSQL;
 		   AND KCU2.CONSTRAINT_SCHEMA =	RC.UNIQUE_CONSTRAINT_SCHEMA
 		   AND KCU2.CONSTRAINT_NAME = RC.UNIQUE_CONSTRAINT_NAME
 		   AND KCU2.ORDINAL_POSITION = KCU1.ORDINAL_POSITION
+		LEFT JOIN {$this->quoteTableName($tc)} TC
+		ON TC.TABLE_SCHEMA = KCU1.TABLE_SCHEMA
+		   AND TC.TABLE_NAME =	KCU1.TABLE_NAME
+		   AND TC.CONSTRAINT_TYPE IN ('PRIMARY KEY', 'UNIQUE')
+		LEFT JOIN {$this->quoteTableName($kcu)} KCU3 
+		ON KCU3.CONSTRAINT_CATALOG = TC.CONSTRAINT_CATALOG
+		   AND KCU3.CONSTRAINT_SCHEMA = TC.CONSTRAINT_SCHEMA
+		   AND KCU3.CONSTRAINT_NAME = TC.CONSTRAINT_NAME
+           AND KCU3.COLUMN_NAME = KCU1.COLUMN_NAME
 EOD;
 
-        return $this->connection->select($sql);
+        $refs = $this->connection->select($sql);
+        foreach ($refs as &$ref) {
+            if (is_null($ref->constraint_column_name)) {
+                $ref->constraint_type = null;
+            }
+        }
+
+        return $refs;
     }
 
     /**
