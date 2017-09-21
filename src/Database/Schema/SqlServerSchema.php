@@ -4,6 +4,7 @@ namespace DreamFactory\Core\SqlSrv\Database\Schema;
 use DreamFactory\Core\Database\Enums\DbFunctionUses;
 use DreamFactory\Core\Database\Enums\FunctionTypes;
 use DreamFactory\Core\Database\Schema\ColumnSchema;
+use DreamFactory\Core\Database\Schema\ParameterSchema;
 use DreamFactory\Core\Database\Schema\RoutineSchema;
 use DreamFactory\Core\Database\Schema\TableSchema;
 use DreamFactory\Core\Enums\DbSimpleTypes;
@@ -665,19 +666,31 @@ MYSQL;
         return $this->connection->raw('(SYSDATETIMEOFFSET())');
     }
 
-    /**
-     * @param $type
-     *
-     * @return mixed|null
-     */
-    public static function getNativeDateTimeFormat($type)
+    public static function getNativeDateTimeFormat($field_info)
     {
+        $type = DbSimpleTypes::TYPE_STRING;
+        if (is_string($field_info)) {
+            $type = $field_info;
+        } elseif ($field_info instanceof ColumnSchema) {
+            $type = $field_info->type;
+        } elseif ($field_info instanceof ParameterSchema) {
+            $type = $field_info->type;
+        }
         switch (strtolower(strval($type))) {
             case DbSimpleTypes::TYPE_DATE:
                 return 'Y-m-d';
 
             case DbSimpleTypes::TYPE_DATETIME:
             case DbSimpleTypes::TYPE_DATETIME_TZ:
+                if (($field_info instanceof ColumnSchema) || ($field_info instanceof ParameterSchema)) {
+                    if ('datetime' === $field_info->dbType) {
+                        if (version_compare(PHP_VERSION, '7.0.0', '>=')) {
+                            return 'Y-m-d H:i:s.v'; // v for milliseconds .000 added in php 7
+                        } else {
+                            return 'Y-m-d H:i:s'; // will blow up if you use microseconds
+                        }
+                    }
+                }
                 return 'Y-m-d H:i:s.u';
 
             case DbSimpleTypes::TYPE_TIME:
