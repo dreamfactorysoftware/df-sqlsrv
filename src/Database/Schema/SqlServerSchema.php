@@ -322,29 +322,6 @@ MYSQL;
         $this->connection->statement("DBCC CHECKIDENT ('$name',RESEED,$value)");
     }
 
-    private $normalTables = [];  // non-view tables
-
-    /**
-     * Enables or disables integrity check.
-     *
-     * @param boolean $check  whether to turn on or off the integrity check.
-     * @param string  $schema the schema of the tables. Defaults to empty string, meaning the current or default schema.
-     *
-     */
-    public function checkIntegrity($check = true, $schema = '')
-    {
-        $enable = $check ? 'CHECK' : 'NOCHECK';
-        if (!isset($this->normalTables[$schema])) {
-            $this->normalTables[$schema] = $this->findTableNames($schema);
-        }
-        $db = $this->connection;
-        foreach ($this->normalTables[$schema] as $table) {
-            $tableName = $this->quoteTableName($table->name);
-            /** @noinspection SqlNoDataSourceInspection */
-            $db->statement("ALTER TABLE $tableName $enable CONSTRAINT ALL");
-        }
-    }
-
     protected function findTableReferences()
     {
         $rc = 'INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS';
@@ -557,16 +534,13 @@ EOD;
 
         $rows = $this->connection->select($sql);
 
-        $defaultSchema = $this->getNamingSchema();
-        $addSchema = (!empty($schema) && ($defaultSchema !== $schema));
-
         $names = [];
         foreach ($rows as $row) {
             $row = array_change_key_case((array)$row, CASE_UPPER);
             $schemaName = isset($row['TABLE_SCHEMA']) ? $row['TABLE_SCHEMA'] : '';
             $resourceName = isset($row['TABLE_NAME']) ? $row['TABLE_NAME'] : '';
             $internalName = $schemaName . '.' . $resourceName;
-            $name = ($addSchema) ? $internalName : $resourceName;
+            $name = $resourceName;
             $quotedName = $this->quoteTableName($schemaName) . '.' . $this->quoteTableName($resourceName);;
             $settings = compact('schemaName', 'resourceName', 'name', 'internalName', 'quotedName');
             $names[strtolower($name)] = new TableSchema($settings);
@@ -590,16 +564,13 @@ EOD;
 
         $rows = $this->connection->select($sql);
 
-        $defaultSchema = $this->getNamingSchema();
-        $addSchema = (!empty($schema) && ($defaultSchema !== $schema));
-
         $names = [];
         foreach ($rows as $row) {
             $row = array_change_key_case((array)$row, CASE_UPPER);
             $schemaName = isset($row['TABLE_SCHEMA']) ? $row['TABLE_SCHEMA'] : '';
             $resourceName = isset($row['TABLE_NAME']) ? $row['TABLE_NAME'] : '';
             $internalName = $schemaName . '.' . $resourceName;
-            $name = ($addSchema) ? $internalName : $resourceName;
+            $name = $resourceName;
             $quotedName = $this->quoteTableName($schemaName) . '.' . $this->quoteTableName($resourceName);
             $settings = compact('schemaName', 'resourceName', 'name', 'internalName', 'quotedName');
             $settings['isView'] = true;
