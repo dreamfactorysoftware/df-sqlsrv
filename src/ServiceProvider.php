@@ -1,7 +1,9 @@
 <?php
+
 namespace DreamFactory\Core\SqlSrv;
 
 use DreamFactory\Core\Components\DbSchemaExtensions;
+use DreamFactory\Core\Enums\LicenseLevel;
 use DreamFactory\Core\Enums\ServiceTypeGroups;
 use DreamFactory\Core\Services\ServiceManager;
 use DreamFactory\Core\Services\ServiceType;
@@ -30,12 +32,13 @@ class ServiceProvider extends \Illuminate\Support\ServiceProvider
         $this->app->resolving('df.service', function (ServiceManager $df) {
             $df->addType(
                 new ServiceType([
-                    'name'            => 'sqlsrv',
-                    'label'           => 'SQL Server',
-                    'description'     => 'Database service supporting SQL Server connections.',
-                    'group'           => ServiceTypeGroups::DATABASE,
-                    'config_handler'  => SqlSrvDbConfig::class,
-                    'factory'         => function ($config) {
+                    'name'                  => 'sqlsrv',
+                    'label'                 => 'SQL Server',
+                    'description'           => 'Database service supporting SQL Server connections.',
+                    'group'                 => ServiceTypeGroups::DATABASE,
+                    'subscription_required' => LicenseLevel::SILVER,
+                    'config_handler'        => SqlSrvDbConfig::class,
+                    'factory'               => function ($config) {
                         return new SqlSrv($config);
                     },
                 ])
