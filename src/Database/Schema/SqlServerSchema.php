@@ -4,6 +4,7 @@ namespace DreamFactory\Core\SqlSrv\Database\Schema;
 use DreamFactory\Core\Database\Enums\DbFunctionUses;
 use DreamFactory\Core\Database\Enums\FunctionTypes;
 use DreamFactory\Core\Database\Schema\ColumnSchema;
+use DreamFactory\Core\Database\Schema\ParameterSchema;
 use DreamFactory\Core\Database\Schema\RoutineSchema;
 use DreamFactory\Core\Database\Schema\TableSchema;
 use DreamFactory\Core\Enums\DbSimpleTypes;
@@ -321,29 +322,6 @@ MYSQL;
         $this->connection->statement("DBCC CHECKIDENT ('$name',RESEED,$value)");
     }
 
-    private $normalTables = [];  // non-view tables
-
-    /**
-     * Enables or disables integrity check.
-     *
-     * @param boolean $check  whether to turn on or off the integrity check.
-     * @param string  $schema the schema of the tables. Defaults to empty string, meaning the current or default schema.
-     *
-     */
-    public function checkIntegrity($check = true, $schema = '')
-    {
-        $enable = $check ? 'CHECK' : 'NOCHECK';
-        if (!isset($this->normalTables[$schema])) {
-            $this->normalTables[$schema] = $this->findTableNames($schema);
-        }
-        $db = $this->connection;
-        foreach ($this->normalTables[$schema] as $table) {
-            $tableName = $this->quoteTableName($table->name);
-            /** @noinspection SqlNoDataSourceInspection */
-            $db->statement("ALTER TABLE $tableName $enable CONSTRAINT ALL");
-        }
-    }
-
     protected function findTableReferences()
     {
         $rc = 'INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS';
@@ -556,16 +534,13 @@ EOD;
 
         $rows = $this->connection->select($sql);
 
-        $defaultSchema = $this->getNamingSchema();
-        $addSchema = (!empty($schema) && ($defaultSchema !== $schema));
-
         $names = [];
         foreach ($rows as $row) {
             $row = array_change_key_case((array)$row, CASE_UPPER);
             $schemaName = isset($row['TABLE_SCHEMA']) ? $row['TABLE_SCHEMA'] : '';
             $resourceName = isset($row['TABLE_NAME']) ? $row['TABLE_NAME'] : '';
             $internalName = $schemaName . '.' . $resourceName;
-            $name = ($addSchema) ? $internalName : $resourceName;
+            $name = $resourceName;
             $quotedName = $this->quoteTableName($schemaName) . '.' . $this->quoteTableName($resourceName);;
             $settings = compact('schemaName', 'resourceName', 'name', 'internalName', 'quotedName');
             $names[strtolower($name)] = new TableSchema($settings);
@@ -589,16 +564,13 @@ EOD;
 
         $rows = $this->connection->select($sql);
 
-        $defaultSchema = $this->getNamingSchema();
-        $addSchema = (!empty($schema) && ($defaultSchema !== $schema));
-
         $names = [];
         foreach ($rows as $row) {
             $row = array_change_key_case((array)$row, CASE_UPPER);
             $schemaName = isset($row['TABLE_SCHEMA']) ? $row['TABLE_SCHEMA'] : '';
             $resourceName = isset($row['TABLE_NAME']) ? $row['TABLE_NAME'] : '';
             $internalName = $schemaName . '.' . $resourceName;
-            $name = ($addSchema) ? $internalName : $resourceName;
+            $name = $resourceName;
             $quotedName = $this->quoteTableName($schemaName) . '.' . $this->quoteTableName($resourceName);
             $settings = compact('schemaName', 'resourceName', 'name', 'internalName', 'quotedName');
             $settings['isView'] = true;
@@ -665,19 +637,31 @@ MYSQL;
         return $this->connection->raw('(SYSDATETIMEOFFSET())');
     }
 
-    /**
-     * @param $type
-     *
-     * @return mixed|null
-     */
-    public static function getNativeDateTimeFormat($type)
+    public static function getNativeDateTimeFormat($field_info)
     {
+        $type = DbSimpleTypes::TYPE_STRING;
+        if (is_string($field_info)) {
+            $type = $field_info;
+        } elseif ($field_info instanceof ColumnSchema) {
+            $type = $field_info->type;
+        } elseif ($field_info instanceof ParameterSchema) {
+            $type = $field_info->type;
+        }
         switch (strtolower(strval($type))) {
             case DbSimpleTypes::TYPE_DATE:
                 return 'Y-m-d';
 
             case DbSimpleTypes::TYPE_DATETIME:
             case DbSimpleTypes::TYPE_DATETIME_TZ:
+                if (($field_info instanceof ColumnSchema) || ($field_info instanceof ParameterSchema)) {
+                    if ('datetime' === $field_info->dbType) {
+                        if (version_compare(PHP_VERSION, '7.0.0', '>=')) {
+                            return 'Y-m-d H:i:s.v'; // v for milliseconds .000 added in php 7
+                        } else {
+                            return 'Y-m-d H:i:s'; // will blow up if you use microseconds
+                        }
+                    }
+                }
                 return 'Y-m-d H:i:s.u';
 
             case DbSimpleTypes::TYPE_TIME:
