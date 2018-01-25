@@ -31,7 +31,7 @@
   },
   "require":     {
     "leaseweb/doctrine-pdo-dblib": "~1.1.0",
-    "dreamfactory/df-sqldb":       "~0.15.0"
+    "dreamfactory/df-sqldb":       "~0.15.1"
   },
   "autoload":    {
     "psr-4": {
