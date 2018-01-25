@@ -1,10 +1,13 @@
 <?php
+
 namespace DreamFactory\Core\SqlSrv\Database\Schema;
 
 use DreamFactory\Core\Database\Enums\DbFunctionUses;
 use DreamFactory\Core\Database\Enums\FunctionTypes;
 use DreamFactory\Core\Database\Schema\ColumnSchema;
+use DreamFactory\Core\Database\Schema\FunctionSchema;
 use DreamFactory\Core\Database\Schema\ParameterSchema;
+use DreamFactory\Core\Database\Schema\ProcedureSchema;
 use DreamFactory\Core\Database\Schema\RoutineSchema;
 use DreamFactory\Core\Database\Schema\TableSchema;
 use DreamFactory\Core\Enums\DbSimpleTypes;
@@ -31,11 +34,9 @@ class SqlServerSchema extends SqlSchema
     }
 
     /**
-     * @param boolean $refresh if we need to refresh schema cache.
-     *
-     * @return string default schema.
+     * @inheritdoc
      */
-    public function getDefaultSchema($refresh = false)
+    public function getDefaultSchema()
     {
         return static::DEFAULT_SCHEMA;
     }
@@ -322,192 +323,147 @@ MYSQL;
         $this->connection->statement("DBCC CHECKIDENT ('$name',RESEED,$value)");
     }
 
-    protected function findTableReferences()
-    {
-        $rc = 'INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS';
-        $kcu = 'INFORMATION_SCHEMA.KEY_COLUMN_USAGE';
-        $tc = 'INFORMATION_SCHEMA.TABLE_CONSTRAINTS';
-        if (isset($this->catalogName)) {
-            $kcu = $this->catalogName . '.' . $kcu;
-            $rc = $this->catalogName . '.' . $rc;
-        }
-
-        //From http://msdn2.microsoft.com/en-us/library/aa175805(SQL.80).aspx
-        $sql = <<<EOD
-		SELECT
-		     KCU1.TABLE_SCHEMA AS 'table_schema'
-		   , KCU1.TABLE_NAME AS 'table_name'
-		   , KCU1.COLUMN_NAME AS 'column_name'
-		   , KCU3.COLUMN_NAME AS 'constraint_column_name'
-		   , TC.CONSTRAINT_TYPE AS 'constraint_type'
-		   , KCU2.TABLE_SCHEMA AS 'referenced_table_schema'
-		   , KCU2.TABLE_NAME AS 'referenced_table_name'
-		   , KCU2.COLUMN_NAME AS 'referenced_column_name'
-		FROM {$this->quoteTableName($rc)} RC
-		JOIN {$this->quoteTableName($kcu)} KCU1
-		ON KCU1.CONSTRAINT_CATALOG = RC.CONSTRAINT_CATALOG
-		   AND KCU1.CONSTRAINT_SCHEMA = RC.CONSTRAINT_SCHEMA
-		   AND KCU1.CONSTRAINT_NAME = RC.CONSTRAINT_NAME
-		JOIN {$this->quoteTableName($kcu)} KCU2
-		ON KCU2.CONSTRAINT_CATALOG = RC.UNIQUE_CONSTRAINT_CATALOG
-		   AND KCU2.CONSTRAINT_SCHEMA =	RC.UNIQUE_CONSTRAINT_SCHEMA
-		   AND KCU2.CONSTRAINT_NAME = RC.UNIQUE_CONSTRAINT_NAME
-		   AND KCU2.ORDINAL_POSITION = KCU1.ORDINAL_POSITION
-		LEFT JOIN {$this->quoteTableName($tc)} TC
-		ON TC.TABLE_SCHEMA = KCU1.TABLE_SCHEMA
-		   AND TC.TABLE_NAME =	KCU1.TABLE_NAME
-		   AND TC.CONSTRAINT_TYPE IN ('PRIMARY KEY', 'UNIQUE')
-		LEFT JOIN {$this->quoteTableName($kcu)} KCU3 
-		ON KCU3.CONSTRAINT_CATALOG = TC.CONSTRAINT_CATALOG
-		   AND KCU3.CONSTRAINT_SCHEMA = TC.CONSTRAINT_SCHEMA
-		   AND KCU3.CONSTRAINT_NAME = TC.CONSTRAINT_NAME
-           AND KCU3.COLUMN_NAME = KCU1.COLUMN_NAME
-EOD;
-
-        $refs = $this->connection->select($sql);
-        foreach ($refs as &$ref) {
-            if (is_null($ref->constraint_column_name)) {
-                $ref->constraint_type = null;
-            }
-        }
-
-        return $refs;
-    }
-
     /**
      * @inheritdoc
      */
-    protected function findColumns(TableSchema $table)
+    protected function loadTableColumns(TableSchema $table)
     {
+        $params = [
+            ':table'  => $table->resourceName,
+            ':schema' => $table->schemaName,
+        ];
         $sql = <<<MYSQL
-SELECT col.name, col.precision, col.scale, col.max_length, col.collation_name, col.is_nullable, col.is_identity,
-       coltype.name as type, coldef.definition as default_definition, 
-       '0' as is_primary_key, '0' as is_unique, '0' as is_index
-FROM sys.columns AS col
-LEFT OUTER JOIN sys.types AS coltype ON coltype.user_type_id = col.user_type_id
-LEFT OUTER JOIN sys.default_constraints AS coldef ON coldef.parent_column_id = col.column_id AND coldef.parent_object_id = col.object_id
-WHERE col.object_id = object_id('{$table->quotedName}')
+SELECT col.column_name, col.numeric_precision, col.numeric_scale, col.character_maximum_length, col.is_nullable, idcol.is_identity,
+       col.data_type, col.column_default 
+FROM information_schema.columns AS col
+LEFT JOIN sys.identity_columns AS idcol ON idcol.object_id = object_id('{$table->quotedName}') AND idcol.name = col.column_name
+WHERE col.table_schema = :schema AND col.table_name = :table
+ORDER BY col.ordinal_position
 MYSQL;
 
-        $columns = $this->connection->select($sql);
-
-        // gather index information
-        $sql = <<<MYSQL
-SELECT col.name, idx.name as is_index, idx.is_unique, idx.is_primary_key
-FROM sys.index_columns AS idx_col
-LEFT OUTER JOIN sys.indexes AS idx ON idx_col.index_id = idx.index_id AND idx.object_id = idx_col.object_id
-LEFT OUTER JOIN sys.columns AS col ON idx_col.column_id = col.column_id AND idx_col.object_id = col.object_id
-WHERE idx_col.object_id = object_id('{$table->quotedName}')
-MYSQL;
-
-        $indexes = $this->connection->select($sql);
-        foreach ($indexes as $index) {
-            foreach ($columns as &$column) {
-                if ($index->name === $column->name) {
-                    if (boolval($index->is_primary_key)) {
-                        $column->is_primary_key = true;
-                    }
-                    if (boolval($index->is_unique)) {
-                        $column->is_unique = true;
-                    }
-                    if (boolval($index->is_index)) {
-                        $column->is_index = true;
-                    }
+        $columns = $this->connection->select($sql, $params);
+        foreach ($columns as $column) {
+            $column = array_change_key_case((array)$column, CASE_LOWER);
+            $c = new ColumnSchema(['name' => $column['column_name']]);
+            $c->quotedName = $this->quoteColumnName($c->name);
+            $c->allowNull = to_bool($column['is_nullable']); // "NO" or "YES"
+//            $c->isIndex = boolval($column['is_index']);
+            $c->dbType = $column['data_type'];
+            $c->precision = intval($column['numeric_precision']);
+            $c->scale = intval($column['numeric_scale']);
+            // all of this is for consistency across drivers
+            if ($c->precision > 0) {
+                if ($c->scale <= 0) {
+                    $c->size = $c->precision;
+                    $c->scale = null;
+                }
+            } else {
+                $c->precision = null;
+                $c->scale = null;
+                $c->size = intval($column['character_maximum_length']);
+                if ($c->size <= 0) {
+                    $c->size = null;
                 }
             }
-        }
-
-        return $columns;
-    }
-
-    /**
-     * Creates a table column.
-     *
-     * @param array $column column metadata
-     *
-     * @return ColumnSchema normalized column metadata
-     */
-    protected function createColumn($column)
-    {
-        $c = new ColumnSchema(['name' => $column['name']]);
-        $c->quotedName = $this->quoteColumnName($c->name);
-        $c->allowNull = boolval($column['is_nullable']);
-        $c->isPrimaryKey = boolval($column['is_primary_key']);
-        $c->isUnique = boolval($column['is_unique']);
-        $c->isIndex = boolval($column['is_index']);
-        $c->dbType = $column['type'];
-        $c->precision = intval($column['precision']);
-        $c->scale = intval($column['scale']);
-        // all of this is for consistency across drivers
-        if ($c->precision > 0) {
-            if ($c->scale <= 0) {
-                $c->size = $c->precision;
-                $c->scale = null;
-            }
-        } else {
-            $c->precision = null;
-            $c->scale = null;
-            $c->size = intval($column['max_length']);
-            if ($c->size <= 0) {
-                $c->size = null;
-            }
-        }
-        $c->autoIncrement = boolval($column['is_identity']);
+            $c->autoIncrement = boolval($column['is_identity']);
 //        $c->comment = strval($column['comment']);
 
-        $c->fixedLength = $this->extractFixedLength($c->dbType);
-        $c->supportsMultibyte = $this->extractMultiByteSupport($c->dbType);
-        $this->extractType($c, $c->dbType);
-        if (isset($column['default_definition'])) {
-            $this->extractDefault($c, $column['default_definition']);
-        }
-        // special type handlers
-        switch ($c->dbType) {
-            case 'image':
-                $c->dbFunction = [
-                    [
-                        'use'           => [DbFunctionUses::SELECT],
-                        'function'      => "(CONVERT(varbinary(max), {$c->quotedName}))",
-                        'function_type' => FunctionTypes::DATABASE
-                    ]
-                ];
-                break;
-            case 'timestamp': // deprecated, not a real timestamp, but internal rowversion
-            case 'rowversion':
-            $c->dbFunction = [
-                [
-                    'use'           => [DbFunctionUses::SELECT],
-                    'function'      => "CAST({$c->quotedName} AS BIGINT)",
-                    'function_type' => FunctionTypes::DATABASE
-                ]
-            ];
-                break;
-            case 'geometry':
-            case 'geography':
-            case 'hierarchyid':
-            $c->dbFunction = [
-                [
-                    'use'           => [DbFunctionUses::SELECT],
-                    'function'      => "({$c->quotedName}.ToString())",
-                    'function_type' => FunctionTypes::DATABASE
-                ]
-            ];
-                break;
-            case 'uniqueidentifier':
-                $c->dbFunction = [
-                    [
-                        'use'           => [DbFunctionUses::SELECT],
-                        'function'      => "(CONVERT(varchar(255), {$c->quotedName}))",
-                        'function_type' => FunctionTypes::DATABASE
-                    ]
-                ];
-                break;
-        }
+            $c->fixedLength = $this->extractFixedLength($c->dbType);
+            $c->supportsMultibyte = $this->extractMultiByteSupport($c->dbType);
+            $this->extractType($c, $c->dbType);
+            if (isset($column['column_default'])) {
+                $this->extractDefault($c, $column['column_default']);
+            }
+            // special type handlers
+            switch ($c->dbType) {
+                case 'image':
+                    $c->dbFunction = [
+                        [
+                            'use'           => [DbFunctionUses::SELECT],
+                            'function'      => "(CONVERT(varbinary(max), {$c->quotedName}))",
+                            'function_type' => FunctionTypes::DATABASE
+                        ]
+                    ];
+                    break;
+                case 'timestamp': // deprecated, not a real timestamp, but internal rowversion
+                case 'rowversion':
+                    $c->dbFunction = [
+                        [
+                            'use'           => [DbFunctionUses::SELECT],
+                            'function'      => "CAST({$c->quotedName} AS BIGINT)",
+                            'function_type' => FunctionTypes::DATABASE
+                        ]
+                    ];
+                    break;
+                case 'geometry':
+                case 'geography':
+                case 'hierarchyid':
+                    $c->dbFunction = [
+                        [
+                            'use'           => [DbFunctionUses::SELECT],
+                            'function'      => "({$c->quotedName}.ToString())",
+                            'function_type' => FunctionTypes::DATABASE
+                        ]
+                    ];
+                    break;
+                case 'uniqueidentifier':
+                    $c->dbFunction = [
+                        [
+                            'use'           => [DbFunctionUses::SELECT],
+                            'function'      => "(CONVERT(varchar(255), {$c->quotedName}))",
+                            'function_type' => FunctionTypes::DATABASE
+                        ]
+                    ];
+                    break;
+            }
 
-        return $c;
+            $table->addColumn($c);
+        }
     }
 
-    protected function findSchemaNames()
+    protected function getTableConstraints($schema = '')
+    {
+        if (is_array($schema)) {
+            $schema = implode("','", $schema);
+        }
+
+        $sql = <<<SQL
+SELECT tc.constraint_type, tc.constraint_schema, tc.constraint_name, tc.constraint_type, tc.table_schema, tc.table_name, kcu.column_name, 
+kcu2.table_schema as referenced_table_schema, kcu2.table_name as referenced_table_name, kcu2.column_name as referenced_column_name, 
+rc.update_rule, rc.delete_rule
+FROM information_schema.TABLE_CONSTRAINTS tc
+JOIN information_schema.KEY_COLUMN_USAGE kcu ON tc.constraint_schema = kcu.constraint_schema AND tc.constraint_name = kcu.constraint_name AND tc.table_name = kcu.table_name
+LEFT JOIN information_schema.REFERENTIAL_CONSTRAINTS rc ON tc.constraint_schema = rc.constraint_schema AND tc.constraint_name = rc.constraint_name
+LEFT JOIN information_schema.KEY_COLUMN_USAGE kcu2 ON rc.unique_constraint_schema = kcu2.constraint_schema AND rc.unique_constraint_name = kcu2.constraint_name
+WHERE tc.constraint_schema IN ('{$schema}');
+SQL;
+
+        $results = $this->connection->select($sql);
+        $constraints = [];
+        foreach ($results as $row) {
+            $row = array_change_key_case((array)$row, CASE_LOWER);
+            $ts = strtolower($row['table_schema']);
+            $tn = strtolower($row['table_name']);
+            $cn = strtolower($row['constraint_name']);
+            $colName = array_get($row, 'column_name');
+            $refColName = array_get($row, 'referenced_column_name');
+            if (isset($constraints[$ts][$tn][$cn])) {
+                $constraints[$ts][$tn][$cn]['column_name'] =
+                    array_merge((array)$constraints[$ts][$tn][$cn]['column_name'], (array)$colName);
+
+                if (isset($refColName)) {
+                    $constraints[$ts][$tn][$cn]['referenced_column_name'] =
+                        array_merge((array)$constraints[$ts][$tn][$cn]['referenced_column_name'], (array)$refColName);
+                }
+            } else {
+                $constraints[$ts][$tn][$cn] = $row;
+            }
+        }
+
+        return $constraints;
+    }
+
+    public function getSchemas()
     {
         $sql = <<<MYSQL
 SELECT schema_name FROM INFORMATION_SCHEMA.SCHEMATA WHERE schema_name NOT IN
@@ -522,7 +478,7 @@ MYSQL;
     /**
      * @inheritdoc
      */
-    protected function findTableNames($schema = '')
+    protected function getTableNames($schema = '')
     {
         $sql = <<<EOD
 SELECT TABLE_NAME, TABLE_SCHEMA FROM [INFORMATION_SCHEMA].[TABLES] WHERE TABLE_TYPE = 'BASE TABLE'
@@ -552,7 +508,7 @@ EOD;
     /**
      * @inheritdoc
      */
-    protected function findViewNames($schema = '')
+    protected function getViewNames($schema = '')
     {
         $sql = <<<EOD
 SELECT TABLE_NAME, TABLE_SCHEMA FROM [INFORMATION_SCHEMA].[TABLES] WHERE TABLE_TYPE = 'VIEW'
@@ -578,6 +534,79 @@ EOD;
         }
 
         return $names;
+    }
+
+    protected function getRoutineNames($type, $schema = '')
+    {
+        $bindings = [':type' => $type];
+        $where = 'ROUTINE_TYPE = :type';
+        if (!empty($schema)) {
+            $where .= ' AND ROUTINE_SCHEMA = :schema';
+            $bindings[':schema'] = $schema;
+        }
+
+        $sql = <<<MYSQL
+SELECT ROUTINE_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.ROUTINES WHERE {$where}
+MYSQL;
+
+        $rows = $this->connection->select($sql, $bindings);
+
+        $names = [];
+        foreach ($rows as $row) {
+            $row = array_change_key_case((array)$row, CASE_UPPER);
+            $resourceName = array_get($row, 'ROUTINE_NAME');
+            $schemaName = $schema;
+            $internalName = $schemaName . '.' . $resourceName;
+            $name = $resourceName;
+            $quotedName = $this->quoteTableName($schemaName) . '.' . $this->quoteTableName($resourceName);
+            $returnType = array_get($row, 'DATA_TYPE');
+            if (!empty($returnType) && (0 !== strcasecmp('void', $returnType))) {
+                $returnType = static::extractSimpleType($returnType);
+            }
+            $settings = compact('schemaName', 'resourceName', 'name', 'internalName', 'quotedName', 'returnType');
+            $names[strtolower($name)] =
+                ('PROCEDURE' === $type) ? new ProcedureSchema($settings) : new FunctionSchema($settings);
+        }
+
+        return $names;
+    }
+
+    protected function loadParameters(RoutineSchema $holder)
+    {
+        $sql = <<<MYSQL
+SELECT p.ORDINAL_POSITION, p.PARAMETER_MODE, p.PARAMETER_NAME, p.DATA_TYPE, p.CHARACTER_MAXIMUM_LENGTH, 
+p.NUMERIC_PRECISION, p.NUMERIC_SCALE
+FROM INFORMATION_SCHEMA.PARAMETERS AS p 
+JOIN INFORMATION_SCHEMA.ROUTINES AS r ON r.SPECIFIC_NAME = p.SPECIFIC_NAME
+WHERE r.ROUTINE_NAME = '{$holder->resourceName}' AND r.ROUTINE_SCHEMA = '{$holder->schemaName}'
+MYSQL;
+
+        $params = $this->connection->select($sql);
+        foreach ($params as $row) {
+            $row = array_change_key_case((array)$row, CASE_UPPER);
+            $name = ltrim(array_get($row, 'PARAMETER_NAME'), '@'); // added on by some drivers, i.e. @name
+            $pos = intval(array_get($row, 'ORDINAL_POSITION'));
+            $simpleType = static::extractSimpleType(array_get($row, 'DATA_TYPE'));
+            if (0 === $pos) {
+                $holder->returnType = $simpleType;
+            } else {
+                $holder->addParameter(new ParameterSchema(
+                    [
+                        'name'       => $name,
+                        'position'   => $pos,
+                        'param_type' => array_get($row, 'PARAMETER_MODE'),
+                        'type'       => $simpleType,
+                        'db_type'    => array_get($row, 'DATA_TYPE'),
+                        'length'     => (isset($row['CHARACTER_MAXIMUM_LENGTH']) ? intval(array_get($row,
+                            'CHARACTER_MAXIMUM_LENGTH')) : null),
+                        'precision'  => (isset($row['NUMERIC_PRECISION']) ? intval(array_get($row, 'NUMERIC_PRECISION'))
+                            : null),
+                        'scale'      => (isset($row['NUMERIC_SCALE']) ? intval(array_get($row, 'NUMERIC_SCALE'))
+                            : null),
+                    ]
+                ));
+            }
+        }
     }
 
     /**
@@ -662,6 +691,7 @@ MYSQL;
                         }
                     }
                 }
+
                 return 'Y-m-d H:i:s.u';
 
             case DbSimpleTypes::TYPE_TIME:
