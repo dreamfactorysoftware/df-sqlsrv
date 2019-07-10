@@ -23,7 +23,7 @@ class SqlSrvDbConfig extends SqlDbConfig
     {
         $fields = parent::getConnectionFields();
 
-        return array_merge($fields, ['charset', 'readonly', 'pooling', 'appname']);
+        return array_merge($fields, ['charset', 'readonly', 'pooling', 'appname', 'encrypt', 'trust_server_certificate']);
     }
 
     public static function getDefaultConnectionInfo()
@@ -48,6 +48,18 @@ class SqlSrvDbConfig extends SqlDbConfig
                 'label'       => 'Enable Connection Pooling',
                 'type'        => 'boolean',
                 'description' => 'Specifies whether the connection is assigned from a connection pool.'
+            ];
+            $defaults[] = [
+                'name'        => 'encrypt',
+                'label'       => 'Encrypted communication',
+                'type'        => 'boolean',
+                'description' => 'Specifies whether the communication with SQL Server is encrypted or unencrypted.'
+            ];
+            $defaults[] = [
+                'name'        => 'trust_server_certificate',
+                'label'       => 'Trust server certificate',
+                'type'        => 'boolean',
+                'description' => 'Specifies whether the client should trust or reject a self-signed server certificate.'
             ];
         }
         $defaults[] = [
