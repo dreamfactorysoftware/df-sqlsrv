@@ -12,6 +12,13 @@ class SqlServerConnector extends LaravelSqlServerConnector
      */
     protected function getDsn(array $config)
     {
+        foreach ($config['options'] as $key=>$value) {
+            $config[$key] = $value;
+        }
+        foreach ($config['attributes'] as $key=>$value) {
+            $config[$key] = $value;
+        }
+
         $drivers = $this->getAvailableDrivers();
         // We override the default usage of dblib, for the sqlsrv driver, now available on Linux as well.
         if (in_array('sqlsrv', $drivers)) {
