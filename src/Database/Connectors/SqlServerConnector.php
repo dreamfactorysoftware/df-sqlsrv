@@ -12,11 +12,16 @@ class SqlServerConnector extends LaravelSqlServerConnector
      */
     protected function getDsn(array $config)
     {
-        foreach ($config['options'] as $key=>$value) {
-            $config[$key] = $value;
+        if (isset($config['options'])) {
+            foreach ($config['options'] as $key => $value) {
+                $config[$key] = $value;
+            }
         }
-        foreach ($config['attributes'] as $key=>$value) {
-            $config[$key] = $value;
+
+        if (isset($config['attributes'])) {
+            foreach ($config['attributes'] as $key => $value) {
+                $config[$key] = $value;
+            }
         }
 
         $drivers = $this->getAvailableDrivers();
