@@ -10,6 +10,17 @@ class SqlServerConnector extends LaravelSqlServerConnector
     /**
      * @inheritdoc
      */
+    protected function getSqlSrvDsn(array $config)
+    {
+        if (isset($config['database'])) $config['database'] = $config['database'] ?: null;
+        if (isset($config['appname'])) $config['appname'] = $config['appname'] ?: null;
+        if (isset($config['readonly'])) $config['readonly'] = $config['readonly'] ?: null;
+        if (isset($config['encrypt'])) $config['encrypt'] = $config['encrypt'] ?: null;
+        if (isset($config['trust_server_certificate'])) $config['trust_server_certificate'] = $config['trust_server_certificate'] ?: null;
+
+        return parent::getSqlSrvDsn($config);
+    }
+
     protected function getDsn(array $config)
     {
         if (isset($config['options'])) {
