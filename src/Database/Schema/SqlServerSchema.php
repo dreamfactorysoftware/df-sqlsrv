@@ -877,7 +877,10 @@ MYSQL;
     {
         // must always use schema in function name
         $name = $routine->quotedName;
-        if (0 !== strpos($name, '.')) {
+
+        //the function name could technically have a period inside it, so its better to search
+        // for "].[" instead as this will show that a schema has been appended to the function name.
+        if (strpos($name, '].[') === false) {
             $name = static::DEFAULT_SCHEMA . '.' . $name;
         }
 
