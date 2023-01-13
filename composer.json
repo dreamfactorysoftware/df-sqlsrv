@@ -32,12 +32,12 @@
   "minimum-stability": "dev",
   "prefer-stable": true,
   "require":     {
-    "leaseweb/doctrine-pdo-dblib": "~1.1.0",
     "dreamfactory/df-sqldb":       "~1.0"
   },
   "autoload":    {
     "psr-4": {
-      "DreamFactory\\Core\\SqlSrv\\": "src/"
+      "DreamFactory\\Core\\SqlSrv\\": "src/",
+      "Doctrine\\DBAL\\":"lib/DoctrinePdoDblib/Doctrine/DBAL"
     }
   },
   "extra":       {
