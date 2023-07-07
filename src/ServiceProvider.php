@@ -13,6 +13,7 @@ use DreamFactory\Core\SqlSrv\Database\SqlServerConnection;
 use DreamFactory\Core\SqlSrv\Models\SqlSrvDbConfig;
 use DreamFactory\Core\SqlSrv\Services\SqlSrv;
 use Illuminate\Database\DatabaseManager;
+use Illuminate\Support\Arr;
 
 class ServiceProvider extends \Illuminate\Support\ServiceProvider
 {
@@ -20,7 +21,8 @@ class ServiceProvider extends \Illuminate\Support\ServiceProvider
     {
         // Add our database drivers override.
         $this->app->resolving('db', function (DatabaseManager $db) {
-            $db->extend('sqlsrv', function ($config) {
+            $db->extend('sqlsrv', function ($config, $name) {
+                $config = Arr::add($config, 'name', $name);
                 $connector = new SqlServerConnector();
                 $connection = $connector->connect($config);
 
