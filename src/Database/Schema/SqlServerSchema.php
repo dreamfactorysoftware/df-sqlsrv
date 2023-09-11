@@ -580,6 +580,7 @@ p.NUMERIC_PRECISION, p.NUMERIC_SCALE
 FROM INFORMATION_SCHEMA.PARAMETERS AS p 
 JOIN INFORMATION_SCHEMA.ROUTINES AS r ON r.SPECIFIC_NAME = p.SPECIFIC_NAME
 WHERE r.ROUTINE_NAME = '{$holder->resourceName}' AND r.ROUTINE_SCHEMA = '{$holder->schemaName}'
+  AND p.SPECIFIC_SCHEMA  = '{$holder->schemaName}'
 MYSQL;
 
         $params = $this->connection->select($sql);
