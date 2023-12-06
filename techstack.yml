@@ -1,0 +1,41 @@
+repo_name: dreamfactorysoftware/df-sqlsrv
+report_id: 0cfedfcf5631455d66f762f7b5c2121e
+repo_type: Public
+timestamp: '2023-12-06T22:36:09+00:00'
+requested_by: anas-srikou
+provider: github
+branch: master
+detected_tools_count: 3
+tools:
+- name: PHP
+  description: A popular general-purpose scripting language that is especially suited
+    to web development
+  website_url: http://www.php.net/
+  open_source: true
+  hosted_saas: false
+  category: Languages & Frameworks
+  sub_category: Languages
+  image_url: https://img.stackshare.io/service/991/hwUcGZ41_400x400.jpg
+  detection_source: Repo Metadata
+- name: Git
+  description: Fast, scalable, distributed revision control system
+  website_url: http://git-scm.com/
+  open_source: true
+  hosted_saas: false
+  category: Build, Test, Deploy
+  sub_category: Version Control System
+  image_url: https://img.stackshare.io/service/1046/git.png
+  detection_source: Repo Metadata
+- name: doctrine/dbal
+  description: Powerful PHP database abstraction layer
+  package_url: https://packagist.org/doctrine/dbal
+  version: 2.1.0
+  open_source: false
+  hosted_saas: false
+  category: Build, Test, Deploy
+  sub_category: Package Managers
+  image_url: https://img.stackshare.io/package/packagist/image.png
+  detection_source_url: github.com/dreamfactorysoftware/df-sqlsrv/blob/master/lib/DoctrinePdoDblib/composer.json
+  detection_source: lib/DoctrinePdoDblib/composer.json
+  last_updated_by: Daniil Lytvyn
+  last_updated_on: 2023-01-13 10:11:05.000000000 Z
