@@ -59,7 +59,8 @@ class SqlSrvDbConfig extends SqlDbConfig
                 'name'        => 'trust_server_certificate',
                 'label'       => 'Trust server certificate',
                 'type'        => 'boolean',
-                'description' => 'Specifies whether the client should trust or reject a self-signed server certificate.'
+                'description' => 'Specifies whether the client should trust or reject a self-signed server certificate.',
+                'default'     => true
             ];
         }
         $defaults[] = [
