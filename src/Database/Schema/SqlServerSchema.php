@@ -328,13 +328,18 @@ MYSQL;
      */
     protected function loadTableColumns(TableSchema $table)
     {
+        // Delegate to linked server column loading if applicable
+        if (!empty($table->native['linked_server'])) {
+            return $this->loadLinkedServerTableColumns($table);
+        }
+
         $params = [
             ':table'  => $table->resourceName,
             ':schema' => $table->schemaName,
         ];
         $sql = <<<MYSQL
 SELECT col.column_name, col.numeric_precision, col.numeric_scale, col.character_maximum_length, col.is_nullable, idcol.is_identity,
-       col.data_type, col.column_default 
+       col.data_type, col.column_default
 FROM INFORMATION_SCHEMA.COLUMNS AS col
 LEFT JOIN sys.identity_columns AS idcol ON idcol.object_id = object_id('{$table->quotedName}') AND idcol.name = col.column_name
 WHERE col.table_schema = :schema AND col.table_name = :table
@@ -421,6 +426,67 @@ MYSQL;
         }
     }
 
+    /**
+     * Loads column metadata for a linked server table using sp_columns_ex.
+     * OraOLEDB returns duplicate rows per column with different TYPE_NAMEs —
+     * we deduplicate by keeping only the first occurrence per ORDINAL_POSITION.
+     *
+     * @param TableSchema $table
+     */
+    protected function loadLinkedServerTableColumns(TableSchema $table)
+    {
+        $serverName = $table->native['linked_server'];
+        $schemaName = $table->native['linked_schema'];
+
+        try {
+            $rows = $this->connection->select(
+                'EXEC sp_columns_ex @table_server = :server, @table_name = :table, @table_schema = :schema',
+                [
+                    ':server' => $serverName,
+                    ':table'  => $table->resourceName,
+                    ':schema' => $schemaName,
+                ]
+            );
+        } catch (\Exception $e) {
+            \Log::warning("Failed to load columns for linked table {$table->name}: " . $e->getMessage());
+            return;
+        }
+
+        // Deduplicate: OraOLEDB returns multiple rows per column with different TYPE_NAMEs.
+        // Keep only the first occurrence per column name (usually the real Oracle type like VARCHAR2).
+        $seen = [];
+        foreach ($rows as $row) {
+            $row = array_change_key_case((array)$row, CASE_UPPER);
+            $colName = $row['COLUMN_NAME'] ?? '';
+
+            if (empty($colName) || isset($seen[$colName])) {
+                continue;
+            }
+            $seen[$colName] = true;
+
+            $typeName = strtolower($row['TYPE_NAME'] ?? 'varchar');
+            $colSize = isset($row['COLUMN_SIZE']) ? intval($row['COLUMN_SIZE']) : null;
+            $nullable = ($row['NULLABLE'] ?? '1') != '0';
+            $precision = isset($row['DECIMAL_DIGITS']) ? intval($row['DECIMAL_DIGITS']) : null;
+
+            $c = new ColumnSchema(['name' => $colName]);
+            $c->quotedName = $this->quoteColumnName($c->name);
+            $c->allowNull = $nullable;
+            $c->autoIncrement = false;
+
+            // Map Oracle types to simple types
+            $c->dbType = $typeName;
+            $c->size = $colSize;
+            $c->precision = $precision;
+
+            $c->fixedLength = $this->extractFixedLength($typeName);
+            $c->supportsMultibyte = $this->extractMultiByteSupport($typeName);
+            $this->extractType($c, $typeName);
+
+            $table->addColumn($c);
+        }
+    }
+
     protected function getTableConstraints($schema = '')
     {
         if (is_array($schema)) {
@@ -501,6 +567,136 @@ EOD;
             $quotedName = $this->quoteTableName($schemaName) . '.' . $this->quoteTableName($resourceName);
             $settings = compact('schemaName', 'resourceName', 'name', 'internalName', 'quotedName');
             $names[strtolower($name)] = new TableSchema($settings);
+        }
+
+        // Append linked server tables if enabled
+        if ($this->connection->getConfig('linked_servers')) {
+            $linkedTables = $this->getLinkedServerTableNames();
+            $names = array_merge($names, $linkedTables);
+        }
+
+        return $names;
+    }
+
+    /**
+     * Returns a list of linked servers configured on this SQL Server instance.
+     *
+     * @return array
+     */
+    protected function getLinkedServers()
+    {
+        try {
+            $rows = $this->connection->select('EXEC sp_linkedservers');
+        } catch (\Exception $e) {
+            \Log::warning('Failed to enumerate linked servers: ' . $e->getMessage());
+            return [];
+        }
+
+        $servers = [];
+        foreach ($rows as $row) {
+            $row = array_change_key_case((array)$row, CASE_UPPER);
+            $servers[] = [
+                'name'     => $row['SRV_NAME'] ?? '',
+                'provider' => $row['SRV_PROVIDERNAME'] ?? '',
+                'product'  => $row['SRV_PRODUCT'] ?? '',
+                'source'   => $row['SRV_DATASOURCE'] ?? '',
+            ];
+        }
+
+        return $servers;
+    }
+
+    /**
+     * Returns table schemas for tables accessible via linked servers.
+     * Filtered by the linked_server_schemas config if set.
+     *
+     * @return array
+     */
+    protected function getLinkedServerTableNames()
+    {
+        $linkedServers = $this->getLinkedServers();
+        if (empty($linkedServers)) {
+            return [];
+        }
+
+        // Parse filter config: ["FAM28.COMPANY_28_RPT", "FAM63.COMPANY_63_RPT"]
+        $schemaFilter = $this->connection->getConfig('linked_server_schemas') ?: [];
+        if (is_string($schemaFilter)) {
+            $schemaFilter = array_map('trim', explode(',', $schemaFilter));
+        }
+
+        // Build a lookup: server_name => [schema1, schema2, ...]
+        $filterMap = [];
+        foreach ($schemaFilter as $entry) {
+            $parts = explode('.', $entry, 2);
+            $serverName = $parts[0];
+            $schemaName = $parts[1] ?? null;
+            $filterMap[$serverName][] = $schemaName;
+        }
+
+        $names = [];
+        foreach ($linkedServers as $server) {
+            $serverName = $server['name'];
+
+            // If filters are defined, only process listed servers
+            if (!empty($filterMap) && !isset($filterMap[$serverName])) {
+                continue;
+            }
+
+            $schemas = $filterMap[$serverName] ?? [null];
+
+            foreach ($schemas as $schemaName) {
+                try {
+                    $params = [':table_server' => $serverName];
+                    $sql = 'EXEC sp_tables_ex @table_server = :table_server';
+                    if (!empty($schemaName)) {
+                        $sql .= ', @table_schema = :table_schema';
+                        $params[':table_schema'] = $schemaName;
+                    }
+                    $rows = $this->connection->select($sql, $params);
+                } catch (\Exception $e) {
+                    \Log::warning("Failed to enumerate linked server tables for {$serverName}: " . $e->getMessage());
+                    continue;
+                }
+
+                foreach ($rows as $row) {
+                    $row = array_change_key_case((array)$row, CASE_UPPER);
+                    $tableType = strtoupper($row['TABLE_TYPE'] ?? '');
+                    $tableSchema = $row['TABLE_SCHEM'] ?? '';
+                    $tableName = $row['TABLE_NAME'] ?? '';
+
+                    if (empty($tableName)) {
+                        continue;
+                    }
+
+                    // Only include actual tables and views, skip system objects
+                    if (!in_array($tableType, ['TABLE', 'BASE TABLE', 'VIEW', 'SYNONYM'])) {
+                        continue;
+                    }
+
+                    // Double-underscore separator for URL-safe API names,
+                    // four-part quoting with empty catalog for SQL queries
+                    $resourceName = $tableName;
+                    $internalName = "{$serverName}__{$tableSchema}__{$tableName}";
+                    $name = $internalName;
+                    $quotedName = "[{$serverName}]..[{$tableSchema}].[{$tableName}]";
+
+                    $settings = [
+                        'schemaName'   => $tableSchema,
+                        'resourceName' => $resourceName,
+                        'name'         => $name,
+                        'internalName' => $internalName,
+                        'quotedName'   => $quotedName,
+                        'isView'       => true, // treat as read-only
+                        'native'       => [
+                            'linked_server' => $serverName,
+                            'linked_schema' => $tableSchema,
+                        ],
+                    ];
+
+                    $names[strtolower($name)] = new TableSchema($settings);
+                }
+            }
         }
 
         return $names;

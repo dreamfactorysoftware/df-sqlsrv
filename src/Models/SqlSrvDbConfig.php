@@ -23,7 +23,10 @@ class SqlSrvDbConfig extends SqlDbConfig
     {
         $fields = parent::getConnectionFields();
 
-        return array_merge($fields, ['charset', 'readonly', 'pooling', 'appname', 'encrypt', 'trust_server_certificate']);
+        return array_merge($fields, [
+            'charset', 'readonly', 'pooling', 'appname', 'encrypt', 'trust_server_certificate',
+            'linked_servers', 'linked_server_schemas',
+        ]);
     }
 
     public static function getDefaultConnectionInfo()
@@ -68,6 +71,21 @@ class SqlSrvDbConfig extends SqlDbConfig
             'label'       => 'Application Name',
             'type'        => 'string',
             'description' => 'The application name used in tracing.'
+        ];
+        $defaults[] = [
+            'name'        => 'linked_servers',
+            'label'       => 'Enable Linked Servers',
+            'type'        => 'boolean',
+            'default'     => false,
+            'description' => 'When enabled, tables from SQL Server linked servers will be discoverable via the API. '
+                . 'Use Linked Server Schemas to filter which schemas are exposed.'
+        ];
+        $defaults[] = [
+            'name'        => 'linked_server_schemas',
+            'label'       => 'Linked Server Schemas',
+            'type'        => 'string',
+            'description' => 'Comma-separated list of SERVER.SCHEMA pairs to expose (e.g. "FAM28.COMPANY_28_RPT,FAM63.COMPANY_63_RPT"). '
+                . 'If empty and linked servers are enabled, all linked server tables will be listed (can be slow).'
         ];
 
         return $defaults;
