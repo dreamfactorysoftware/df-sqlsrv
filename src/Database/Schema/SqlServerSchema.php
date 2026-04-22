@@ -810,6 +810,12 @@ MYSQL;
                             // workaround for MS reporting OUT-behaving params as INOUT
                             if (is_null($value = array_get($values, $key))) {
                                 $value = 'NULL';
+                            } elseif (!is_int($value) && !is_float($value)) {
+                                // Quote non-numeric scalars to prevent SQL injection on the
+                                // dblib/FreeTDS path where PDO binding is unavailable for
+                                // INOUT parameters. The sqlsrv driver path uses PDO binding
+                                // instead (see doRoutineBinding) so this only runs for dblib.
+                                $value = $this->quoteValue($value);
                             }
                             $prefix .= "SET $pName = $value;";
                         }
