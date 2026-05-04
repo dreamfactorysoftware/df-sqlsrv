@@ -667,12 +667,20 @@ MYSQL;
     public function dropColumns($table, $columns)
     {
         $columns = (array)$columns;
-
-        if (!empty($columns)) {
-            return $this->connection->statement("ALTER TABLE $table DROP COLUMN" . implode(',', $columns));
+        if (empty($columns)) {
+            return false;
         }
 
-        return false;
+        // Quote each identifier — callers historically passed raw user-
+        // supplied column names. Skip if already wrapped in [...].
+        $quotedTable = (str_starts_with(ltrim($table), '[')) ? $table : $this->quoteTableName($table);
+        $quotedCols = array_map(function ($c) {
+            return (str_starts_with(ltrim((string) $c), '[')) ? (string) $c : $this->quoteColumnName((string) $c);
+        }, $columns);
+
+        return $this->connection->statement(
+            "ALTER TABLE {$quotedTable} DROP COLUMN " . implode(', ', $quotedCols)
+        );
     }
 
     public function getTimestampForSet()
