@@ -423,22 +423,27 @@ MYSQL;
 
     protected function getTableConstraints($schema = '')
     {
-        if (is_array($schema)) {
-            $schema = implode("','", $schema);
+        // Normalize to an array of schemas, then build a parameterized
+        // placeholder list so no schema name reaches the SQL via interpolation.
+        $schemas = is_array($schema) ? array_values($schema) : [$schema];
+        $schemas = array_values(array_filter($schemas, fn ($s) => $s !== '' && $s !== null));
+        if (empty($schemas)) {
+            return [];
         }
+        $placeholders = implode(',', array_fill(0, count($schemas), '?'));
 
         $sql = <<<SQL
-SELECT tc.constraint_type, tc.constraint_schema, tc.constraint_name, tc.constraint_type, tc.table_schema, tc.table_name, kcu.column_name, 
-kcu2.table_schema as referenced_table_schema, kcu2.table_name as referenced_table_name, kcu2.column_name as referenced_column_name, 
+SELECT tc.constraint_type, tc.constraint_schema, tc.constraint_name, tc.constraint_type, tc.table_schema, tc.table_name, kcu.column_name,
+kcu2.table_schema as referenced_table_schema, kcu2.table_name as referenced_table_name, kcu2.column_name as referenced_column_name,
 rc.update_rule, rc.delete_rule
 FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
 JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu ON tc.constraint_schema = kcu.constraint_schema AND tc.constraint_name = kcu.constraint_name AND tc.table_name = kcu.table_name
 LEFT JOIN INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS rc ON tc.constraint_schema = rc.constraint_schema AND tc.constraint_name = rc.constraint_name
 LEFT JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu2 ON rc.unique_constraint_schema = kcu2.constraint_schema AND rc.unique_constraint_name = kcu2.constraint_name
-WHERE tc.constraint_schema IN ('{$schema}');
+WHERE tc.constraint_schema IN ({$placeholders});
 SQL;
 
-        $results = $this->connection->select($sql);
+        $results = $this->connection->select($sql, $schemas);
         $constraints = [];
         foreach ($results as $row) {
             $row = array_change_key_case((array)$row, CASE_LOWER);
@@ -484,11 +489,13 @@ MYSQL;
 SELECT TABLE_NAME, TABLE_SCHEMA FROM [INFORMATION_SCHEMA].[TABLES] WHERE TABLE_TYPE = 'BASE TABLE'
 EOD;
 
+        $bindings = [];
         if (!empty($schema)) {
-            $sql .= " AND TABLE_SCHEMA = '$schema'";
+            $sql .= " AND TABLE_SCHEMA = :schema";
+            $bindings[':schema'] = $schema;
         }
 
-        $rows = $this->connection->select($sql);
+        $rows = $this->connection->select($sql, $bindings);
 
         $names = [];
         foreach ($rows as $row) {
@@ -515,11 +522,13 @@ EOD;
 SELECT TABLE_NAME, TABLE_SCHEMA FROM [INFORMATION_SCHEMA].[TABLES] WHERE TABLE_TYPE = 'VIEW'
 EOD;
 
+        $bindings = [];
         if (!empty($schema)) {
-            $sql .= " AND TABLE_SCHEMA = '$schema'";
+            $sql .= " AND TABLE_SCHEMA = :schema";
+            $bindings[':schema'] = $schema;
         }
 
-        $rows = $this->connection->select($sql);
+        $rows = $this->connection->select($sql, $bindings);
 
         $names = [];
         foreach ($rows as $row) {
@@ -575,15 +584,18 @@ MYSQL;
     protected function loadParameters(RoutineSchema $holder)
     {
         $sql = <<<MYSQL
-SELECT p.ORDINAL_POSITION, p.PARAMETER_MODE, p.PARAMETER_NAME, p.DATA_TYPE, p.CHARACTER_MAXIMUM_LENGTH, 
+SELECT p.ORDINAL_POSITION, p.PARAMETER_MODE, p.PARAMETER_NAME, p.DATA_TYPE, p.CHARACTER_MAXIMUM_LENGTH,
 p.NUMERIC_PRECISION, p.NUMERIC_SCALE
-FROM INFORMATION_SCHEMA.PARAMETERS AS p 
+FROM INFORMATION_SCHEMA.PARAMETERS AS p
 JOIN INFORMATION_SCHEMA.ROUTINES AS r ON r.SPECIFIC_NAME = p.SPECIFIC_NAME
-WHERE r.ROUTINE_NAME = '{$holder->resourceName}' AND r.ROUTINE_SCHEMA = '{$holder->schemaName}'
-  AND p.SPECIFIC_SCHEMA  = '{$holder->schemaName}'
+WHERE r.ROUTINE_NAME = :routineName AND r.ROUTINE_SCHEMA = :schemaName
+  AND p.SPECIFIC_SCHEMA  = :schemaName
 MYSQL;
 
-        $params = $this->connection->select($sql);
+        $params = $this->connection->select($sql, [
+            ':routineName' => $holder->resourceName,
+            ':schemaName'  => $holder->schemaName,
+        ]);
         foreach ($params as $row) {
             $row = array_change_key_case((array)$row, CASE_UPPER);
             $name = ltrim(array_get($row, 'PARAMETER_NAME'), '@'); // added on by some drivers, i.e. @name
@@ -655,12 +667,20 @@ MYSQL;
     public function dropColumns($table, $columns)
     {
         $columns = (array)$columns;
-
-        if (!empty($columns)) {
-            return $this->connection->statement("ALTER TABLE $table DROP COLUMN" . implode(',', $columns));
+        if (empty($columns)) {
+            return false;
         }
 
-        return false;
+        // Quote each identifier — callers historically passed raw user-
+        // supplied column names. Skip if already wrapped in [...].
+        $quotedTable = (str_starts_with(ltrim($table), '[')) ? $table : $this->quoteTableName($table);
+        $quotedCols = array_map(function ($c) {
+            return (str_starts_with(ltrim((string) $c), '[')) ? (string) $c : $this->quoteColumnName((string) $c);
+        }, $columns);
+
+        return $this->connection->statement(
+            "ALTER TABLE {$quotedTable} DROP COLUMN " . implode(', ', $quotedCols)
+        );
     }
 
     public function getTimestampForSet()
