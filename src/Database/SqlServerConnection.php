@@ -82,7 +82,7 @@ class SqlServerConnection extends LaravelSqlServerConnection
      */
     protected function getDefaultQueryGrammar()
     {
-        return $this->withTablePrefix(new SqlServerGrammar);
+        return new SqlServerGrammar($this);
     }
 
     /**

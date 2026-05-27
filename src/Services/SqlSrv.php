@@ -70,7 +70,9 @@ class SqlSrv extends SqlDb
         array_unshift($statements, 'SET ANSI_NULLS ON;');
 
         foreach ($statements as $statement) {
-            $this->dbConn->statement($statement);
+            if (!empty($statement) && is_string($statement) && trim($statement) !== '') {
+                $this->dbConn->statement($statement);
+            }
         }
     }
 }
