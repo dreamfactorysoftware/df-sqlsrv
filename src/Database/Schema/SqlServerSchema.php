@@ -588,13 +588,19 @@ SELECT p.ORDINAL_POSITION, p.PARAMETER_MODE, p.PARAMETER_NAME, p.DATA_TYPE, p.CH
 p.NUMERIC_PRECISION, p.NUMERIC_SCALE
 FROM INFORMATION_SCHEMA.PARAMETERS AS p
 JOIN INFORMATION_SCHEMA.ROUTINES AS r ON r.SPECIFIC_NAME = p.SPECIFIC_NAME
-WHERE r.ROUTINE_NAME = :routineName AND r.ROUTINE_SCHEMA = :schemaName
-  AND p.SPECIFIC_SCHEMA  = :schemaName
+WHERE r.ROUTINE_NAME = :routineName AND r.ROUTINE_SCHEMA = :routineSchema
+  AND p.SPECIFIC_SCHEMA  = :paramSchema
 MYSQL;
 
+        // NOTE: bind a distinct placeholder for each occurrence of the schema name.
+        // The PDO sqlsrv driver uses native (non-emulated) prepares and does not
+        // support re-using a single named placeholder across multiple positions;
+        // a repeated :schemaName yields SQLSTATE[07002] "COUNT field incorrect or
+        // syntax error" (parameter count mismatch) when calling stored procedures.
         $params = $this->connection->select($sql, [
-            ':routineName' => $holder->resourceName,
-            ':schemaName'  => $holder->schemaName,
+            ':routineName'   => $holder->resourceName,
+            ':routineSchema' => $holder->schemaName,
+            ':paramSchema'   => $holder->schemaName,
         ]);
         foreach ($params as $row) {
             $row = array_change_key_case((array)$row, CASE_UPPER);
